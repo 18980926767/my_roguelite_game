@@ -6,10 +6,10 @@ namespace CaveCurse.Core.Tests;
 public class CombatTests
 {
     [Fact]
-    public void BasicHit_UsesHalfAttackThenDefense()
+    public void BasicHit_UsesHalfStrengthThenPercentDefense()
     {
-        var damage = CombatMath.BasicDamage(12, 0.5f, 2);
-        Assert.Equal(4, damage);
+        var damage = CombatMath.BasicDamage(10, 0.5f, 10);
+        Assert.Equal(5, damage);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class CombatTests
         for (var i = 0; i < 30; i++)
             seen.Add(run.ApplyRandomBonus(rng));
         Assert.Contains(seen, line => line.Contains("攻击") || line.Contains("击退") || line.Contains("生命"));
-        Assert.True(run.Attack >= 12);
+        Assert.True(run.Attack >= 10);
         Assert.True(run.OrdinarySword.BasicMultiplier >= 0.5f);
     }
 

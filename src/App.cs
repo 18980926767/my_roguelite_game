@@ -65,7 +65,7 @@ public partial class App : Control
         _y = step.Value.Y;
         var cell = _map.At(_x, _y);
         cell.Visited = true;
-        _explore.SetPlayer(_x, _y);
+        _explore.EnterFrom(_x, _y, dir);
         Enter(cell);
     }
 

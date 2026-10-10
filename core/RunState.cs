@@ -26,19 +26,20 @@ public sealed class RunState
 {
     public const int SlotCount = 2;
     public const int SkillManaCost = 8;
-    public const int SkillCooldownTurns = 2;
+    public const float SkillCooldownSeconds = 6f;
+    public const float MoveSpeedPerPoint = 3f;
 
-    public int Hp { get; set; } = 80;
-    public int MaxHp { get; set; } = 80;
-    public int Mana { get; set; } = 40;
-    public int MaxMana { get; set; } = 40;
-    public int Attack { get; set; } = 12;
-    public int Defense { get; set; } = 2;
-    public float MoveSpeed { get; set; } = 220f;
+    public int Hp { get; set; } = 100;
+    public int MaxHp { get; set; } = 100;
+    public int Mana { get; set; } = 50;
+    public int MaxMana { get; set; } = 50;
+    public int Attack { get; set; } = 10;
+    public int Defense { get; set; } = 10;
+    public float MoveSpeed { get; set; } = 300f;
     public int ActionPoints { get; set; } = 1;
     public int Gold { get; set; }
     public int Shield { get; set; }
-    public int SkillCooldown { get; set; }
+    public float SkillCooldown { get; set; }
     public bool Won { get; set; }
     public bool Dead { get; set; }
 

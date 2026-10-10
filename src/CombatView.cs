@@ -48,7 +48,8 @@ public sealed partial class CombatView : Control
     private readonly List<Plan> _queue = new();
     private readonly Random _rng;
     private readonly Action<bool, string> _finished;
-    private readonly Rect2 _arena = new(24, 72, 760, 500);
+    private Rect2 _arena = new(48, 64, 900, 480);
+    private bool _placed;
     private readonly List<string> _log = new();
 
     private Phase _phase = Phase.Realtime;
@@ -61,7 +62,7 @@ public sealed partial class CombatView : Control
     private bool _playerFlash;
     private Label _hud = null!;
     private Label _logLabel = null!;
-    private VBoxContainer _actions = null!;
+    private GridContainer _actions = null!;
     private readonly List<Button> _actionButtons = new();
 
     public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished)
@@ -77,8 +78,6 @@ public sealed partial class CombatView : Control
         backdrop.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(backdrop);
 
-        _player = _arena.GetCenter();
-        var i = 0;
         foreach (var spec in specs)
         {
             _foes.Add(new Foe
@@ -86,24 +85,25 @@ public sealed partial class CombatView : Control
                 Spec = spec,
                 Hp = spec.MaxHp,
                 Shield = spec.Shield,
-                Pos = new Vector2(_arena.Position.X + 180 + i * 220, _arena.Position.Y + 120),
+                Pos = Vector2.Zero,
             });
-            i++;
         }
 
-        var side = new VBoxContainer
-        {
-            Position = new Vector2(820, 24),
-            Size = new Vector2(430, 680),
-        };
-        AddChild(side);
         _hud = UiKit.Label("");
-        side.AddChild(_hud);
-        _actions = new VBoxContainer();
-        side.AddChild(_actions);
-        _logLabel = UiKit.Label("蓄力条满了之后，按空格进入时停。可以一直不按。");
-        _logLabel.CustomMinimumSize = new Vector2(420, 280);
-        side.AddChild(_logLabel);
+        _hud.Position = new Vector2(24, 8);
+        AddChild(_hud);
+        _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格，可以一直不按。");
+        _logLabel.Position = new Vector2(520, 8);
+        _logLabel.CustomMinimumSize = new Vector2(480, 48);
+        AddChild(_logLabel);
+        _actions = new GridContainer
+        {
+            Columns = 4,
+            Position = new Vector2(24, 560),
+        };
+        _actions.AddThemeConstantOverride("h_separation", 8);
+        _actions.AddThemeConstantOverride("v_separation", 8);
+        AddChild(_actions);
         BuildFocusButtons();
         SetFocusUi(false);
     }
@@ -112,13 +112,16 @@ public sealed partial class CombatView : Control
     {
         if (_ended)
             return;
+        FitArena();
         var dt = (float)delta;
         if (_iframe > 0)
             _iframe -= dt;
 
         if (_phase == Phase.Realtime)
         {
-            _charge = MathF.Min(1f, _charge + dt / 3.5f);
+            _charge = MathF.Min(1f, _charge + dt / 8f);
+            if (_run.SkillCooldown > 0f)
+                _run.SkillCooldown = MathF.Max(0f, _run.SkillCooldown - dt);
             MovePlayer(dt);
             TickFoes(dt);
             TickShots(dt);
@@ -176,10 +179,25 @@ public sealed partial class CombatView : Control
             BeginFocus();
     }
 
+    private void FitArena()
+    {
+        var size = Size.X < 200 ? GetViewportRect().Size : Size;
+        _arena = new Rect2(40, 78, Mathf.Max(480, size.X - 80), Mathf.Max(280, size.Y - 250));
+        if (_actions != null)
+            _actions.Position = new Vector2(24, size.Y - 150);
+        if (_placed)
+            return;
+        _player = _arena.GetCenter() + new Vector2(0, 90);
+        for (var n = 0; n < _foes.Count; n++)
+            _foes[n].Pos = new Vector2(_arena.Position.X + 180 + n * 220, _arena.Position.Y + 120);
+        _placed = true;
+    }
+
     public override void _Draw()
     {
-        DrawRect(_arena, new Color("1b1b26"));
-        DrawRect(_arena, new Color("3a3a4a"), false, 2);
+        FitArena();
+        DrawRect(_arena, new Color("4a5c6a"));
+        DrawRect(_arena, new Color("e6d3a3"), false, 4);
         foreach (var shot in _shots)
         {
             if (shot.Alive)
@@ -194,10 +212,11 @@ public sealed partial class CombatView : Control
                 : foe.Spec.Dashes && !foe.Spec.Shoots ? new Color("e67e22") : new Color("e74c3c");
             if (foe.Spec.MaxHp > 80)
                 color = new Color("8e44ad");
-            DrawCircle(foe.Pos, 18, color);
+            DrawCircle(foe.Pos, 22, color);
             DrawString(UiKit.Font, foe.Pos + new Vector2(-18, 28), $"{foe.Hp}", fontSize: 14);
         }
-        DrawCircle(_player, 14, _playerFlash ? new Color("f7dc6f") : new Color("ecf0f1"));
+        DrawCircle(_player, 18, _playerFlash ? new Color("f7dc6f") : new Color("f7f3ea"));
+        DrawCircle(_player, 18, new Color("1b1b1b"), false, 2);
         var bar = new Rect2(_arena.Position.X, _arena.Position.Y - 28, _arena.Size.X, 16);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
@@ -209,8 +228,6 @@ public sealed partial class CombatView : Control
         Engine.TimeScale = 0;
         _ap = _run.ActionPoints;
         _queue.Clear();
-        if (_run.SkillCooldown > 0)
-            _run.SkillCooldown--;
         var nearest = Nearest();
         _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
         SetFocusUi(true);
@@ -256,12 +273,12 @@ public sealed partial class CombatView : Control
     {
         if (_ap <= 0 || _run.SkillCooldown > 0 || _run.Mana < RunState.SkillManaCost)
         {
-            Note(_run.Mana < RunState.SkillManaCost ? "蓝不够。" : "技能还在冷却，或者行动点用完了。");
+            Note(_run.Mana < RunState.SkillManaCost ? "魔力不足。" : "技能还在冷却，或者行动点用完了。");
             return;
         }
         _ap--;
         _run.Mana -= RunState.SkillManaCost;
-        _run.SkillCooldown = RunState.SkillCooldownTurns;
+        _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
     }
@@ -531,8 +548,8 @@ public sealed partial class CombatView : Control
             _ => _charge >= 1f ? "按空格时停" : "蓄力中",
         };
         _hud.Text =
-            $"{phase}\n生命 {_run.Hp}/{_run.MaxHp}  蓝 {_run.Mana}/{_run.MaxMana}  护盾 {_run.Shield}\n" +
-            $"行动点 {_ap}    技能冷却 {_run.SkillCooldown}    手持 {_run.ActiveWeapon?.Name}";
+            $"{phase}\n生命 {_run.Hp}/{_run.MaxHp}  魔力 {_run.Mana}/{_run.MaxMana}  护盾 {_run.Shield}\n" +
+            $"力量 {_run.Attack}  防御 {_run.Defense}  行动点 {_ap}  冷却 {_run.SkillCooldown:0.0} 秒\n手持 {_run.ActiveWeapon?.Name}";
     }
 
     private void Note(string text)

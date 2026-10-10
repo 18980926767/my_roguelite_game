@@ -14,10 +14,18 @@ public static class CombatMath
     public const float KnockbackPerStack = 48f;
     public const int CollisionDamage = 6;
 
-    public static int BasicDamage(int attack, float multiplier, int defense)
+    public static int BasicDamage(int strength, float ratio, int defense)
     {
-        var raw = (int)MathF.Floor(attack * multiplier);
-        return Math.Max(1, raw - defense);
+        var raw = strength * ratio;
+        var rate = defense <= 0f ? 0f : defense / (defense + 100f);
+        if (rate > 0.85f)
+            rate = 0.85f;
+        var after = raw * (1f - rate);
+        if (after <= 0f)
+            return 0;
+        if (after < 1f)
+            return 1;
+        return (int)MathF.Round(after);
     }
 
     public static int ApplyStrike(ref int shield, ref int hp, int amount)
