@@ -32,13 +32,12 @@ public sealed partial class CombatView : Control
         public bool Alive = true;
     }
 
-    private enum Act { Attack, Skill, Dodge, Swap }
+    private enum Act { Attack, Skill, Swap }
 
     private sealed class Plan
     {
         public Act Kind;
         public int Target;
-        public Vector2 Dodge;
         public string Text = "";
     }
 
@@ -63,6 +62,8 @@ public sealed partial class CombatView : Control
     private Label _hud = null!;
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
+    private VBoxContainer _skillBar = null!;
+    private bool _skillOpen;
     private readonly List<Button> _actionButtons = new();
 
     public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished)
@@ -73,10 +74,6 @@ public sealed partial class CombatView : Control
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         ProcessMode = ProcessModeEnum.Always;
         MouseFilter = MouseFilterEnum.Stop;
-        var backdrop = UiKit.Panel(new Color("101018"));
-        backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        backdrop.MouseFilter = MouseFilterEnum.Ignore;
-        AddChild(backdrop);
 
         foreach (var spec in specs)
         {
@@ -181,7 +178,8 @@ public sealed partial class CombatView : Control
 
     private void FitArena()
     {
-        var size = Size.X < 200 ? GetViewportRect().Size : Size;
+        var view = GetViewportRect().Size;
+        var size = Size.X < view.X * 0.8f ? view : Size;
         _arena = new Rect2(40, 78, Mathf.Max(480, size.X - 80), Mathf.Max(280, size.Y - 250));
         if (_actions != null)
             _actions.Position = new Vector2(24, size.Y - 150);
@@ -193,10 +191,18 @@ public sealed partial class CombatView : Control
         _placed = true;
     }
 
+    public override void _Ready()
+    {
+        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        Size = GetViewportRect().Size;
+        FitArena();
+    }
+
     public override void _Draw()
     {
         FitArena();
-        DrawRect(_arena, new Color("4a5c6a"));
+        DrawRect(new Rect2(Vector2.Zero, Size), new Color("1a2030"));
+        DrawRect(_arena, new Color("7f97a8"));
         DrawRect(_arena, new Color("e6d3a3"), false, 4);
         foreach (var shot in _shots)
         {
@@ -238,14 +244,22 @@ public sealed partial class CombatView : Control
     private void BuildFocusButtons()
     {
         AddAction("普攻最近的敌人", () => QueueAttack(Nearest()));
-        AddAction("随机属性", QueueSkill);
-        AddAction("向北闪避", () => QueueDodge(Vector2.Up));
-        AddAction("向南闪避", () => QueueDodge(Vector2.Down));
-        AddAction("向西闪避", () => QueueDodge(Vector2.Left));
-        AddAction("向东闪避", () => QueueDodge(Vector2.Right));
+        AddAction("技能", ToggleSkills);
         AddAction("切换手持", QueueSwap);
         AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
+        _skillBar = new VBoxContainer();
+        _actions.AddChild(_skillBar);
+        var randomSkill = UiKit.Button("随机属性", QueueSkill);
+        randomSkill.CustomMinimumSize = new Vector2(220, 40);
+        _skillBar.AddChild(randomSkill);
+        _skillBar.Visible = false;
+    }
+
+    private void ToggleSkills()
+    {
+        _skillOpen = !_skillOpen;
+        _skillBar.Visible = _skillOpen;
     }
 
     private void AddAction(string text, Action action)
@@ -258,6 +272,11 @@ public sealed partial class CombatView : Control
     private void SetFocusUi(bool on)
     {
         _actions.Visible = on;
+        if (!on && _skillBar != null)
+        {
+            _skillOpen = false;
+            _skillBar.Visible = false;
+        }
     }
 
     private void QueueAttack(int index)
@@ -280,15 +299,8 @@ public sealed partial class CombatView : Control
         _run.Mana -= RunState.SkillManaCost;
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
-        Note(string.Join(" → ", _queue.Select(item => item.Text)));
-    }
-
-    private void QueueDodge(Vector2 dir)
-    {
-        if (_ap <= 0)
-            return;
-        _ap--;
-        _queue.Add(new Plan { Kind = Act.Dodge, Dodge = dir, Text = "闪避" });
+        _skillOpen = false;
+        _skillBar.Visible = false;
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
     }
 
@@ -312,7 +324,7 @@ public sealed partial class CombatView : Control
             return;
         var last = _queue[^1];
         _queue.RemoveAt(_queue.Count - 1);
-        if (last.Kind is Act.Attack or Act.Skill or Act.Dodge)
+        if (last.Kind is Act.Attack or Act.Skill)
             _ap++;
         if (last.Kind == Act.Swap)
             _run.ActiveSlot = 1 - _run.ActiveSlot;
@@ -332,11 +344,6 @@ public sealed partial class CombatView : Control
                 ResolveAttack(plan.Target);
             else if (plan.Kind == Act.Skill)
                 Note("随机属性：" + _run.ApplyRandomBonus(_rng));
-            else if (plan.Kind == Act.Dodge)
-            {
-                _player += plan.Dodge * 110f;
-                ClampPlayer();
-            }
         }
         _queue.Clear();
         Engine.TimeScale = 1;
