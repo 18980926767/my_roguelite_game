@@ -31,30 +31,37 @@ public sealed partial class ExploreView : Control
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
 
+        var top = new VBoxContainer();
+        top.SetAnchorsPreset(LayoutPreset.TopWide);
+        top.OffsetLeft = 24;
+        top.OffsetTop = 12;
+        top.OffsetRight = -24;
+        top.OffsetBottom = 176;
+        top.AddThemeConstantOverride("separation", 6);
+        AddChild(top);
+
         _stats = UiKit.Label("");
-        _stats.Position = new Vector2(24, 16);
-        AddChild(_stats);
+        top.AddChild(_stats);
 
         _prompt = UiKit.Label("走到发亮的门口，再点窥视或进入。");
-        _prompt.Position = new Vector2(24, 88);
-        AddChild(_prompt);
+        top.AddChild(_prompt);
+
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 12);
+        top.AddChild(row);
 
         _peekButton = UiKit.Button("窥视", OnPeek);
-        _peekButton.Position = new Vector2(24, 130);
-        _peekButton.CustomMinimumSize = new Vector2(140, 44);
+        _peekButton.CustomMinimumSize = new Vector2(160, 44);
         _peekButton.FocusMode = FocusModeEnum.None;
-        AddChild(_peekButton);
+        row.AddChild(_peekButton);
 
         _enterButton = UiKit.Button("进入", OnEnter);
-        _enterButton.Position = new Vector2(176, 130);
-        _enterButton.CustomMinimumSize = new Vector2(140, 44);
+        _enterButton.CustomMinimumSize = new Vector2(160, 44);
         _enterButton.FocusMode = FocusModeEnum.None;
-        AddChild(_enterButton);
+        row.AddChild(_enterButton);
 
         _log = UiKit.Label("你在出生的房间里。方向键或 WASD 走动。小地图在右下角，不能点。");
-        _log.Position = new Vector2(24, 190);
-        _log.CustomMinimumSize = new Vector2(420, 80);
-        AddChild(_log);
+        top.AddChild(_log);
 
         _player = new Vector2(640, 360);
         RefreshHud();
@@ -117,7 +124,7 @@ public sealed partial class ExploreView : Control
     private void FitRoom()
     {
         var size = Size.X < 200 ? GetViewportRect().Size : Size;
-        _room = new Rect2(48, 150, Mathf.Max(480, size.X - 280), Mathf.Max(360, size.Y - 190));
+        _room = new Rect2(48, 196, Mathf.Max(480, size.X - 96), Mathf.Max(320, size.Y - 230));
     }
 
     private void ClampPlayer()

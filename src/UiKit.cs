@@ -36,7 +36,9 @@ public static class UiKit
         {
             Text = text,
             Theme = Theme,
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            AutowrapMode = TextServer.AutowrapMode.Off,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(640, 0),
         };
     }
 
