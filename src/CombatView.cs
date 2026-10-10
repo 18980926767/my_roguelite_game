@@ -222,10 +222,7 @@ public sealed partial class CombatView : Control
             if (foe.Spec.MaxHp > 80)
                 color = new Color("8e44ad");
             if (foe.Windup > 0f)
-            {
                 color = new Color("f5d76e");
-                DrawLine(foe.Pos, foe.Locked, new Color("f5d76e"), 3f);
-            }
             DrawCircle(foe.Pos, 22, color);
             DrawString(UiKit.Font, foe.Pos + new Vector2(-18, 28), $"{foe.Hp}", fontSize: 14);
         }
