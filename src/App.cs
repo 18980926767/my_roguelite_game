@@ -140,8 +140,9 @@ public partial class App : Control
             specs.Add(EnemyCatalog.Boss);
         else
         {
-            specs.Add(_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher);
-            specs.Add(_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher);
+            var threat = _map.Threat(_x, _y);
+            specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
+            specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
         }
         combat = new CombatView(_run, specs, _rng, (won, message) =>
         {

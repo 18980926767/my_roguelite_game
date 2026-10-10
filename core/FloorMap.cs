@@ -73,6 +73,34 @@ public sealed class FloorMap
 
     public int Degree(int x, int y) => Neighbors(x, y).Count();
 
+    public int StepsFromGate(int x, int y)
+    {
+        var dist = new Dictionary<(int, int), int> { [(GateX, GateY)] = 0 };
+        var queue = new Queue<(int, int)>();
+        queue.Enqueue((GateX, GateY));
+        while (queue.Count > 0)
+        {
+            var (cx, cy) = queue.Dequeue();
+            foreach (var next in Neighbors(cx, cy))
+            {
+                if (dist.ContainsKey(next))
+                    continue;
+                dist[next] = dist[(cx, cy)] + 1;
+                queue.Enqueue(next);
+            }
+        }
+        if (dist.TryGetValue((x, y), out var steps))
+            return steps;
+        return Math.Abs(x - GateX) + Math.Abs(y - GateY);
+    }
+
+    public float Threat(int x, int y)
+    {
+        var span = Math.Max(1, StepsFromGate(SpawnX, SpawnY));
+        var away = StepsFromGate(x, y) / (float)span;
+        return Math.Clamp(1f - away, 0f, 1f);
+    }
+
     public bool Reachable(int x0, int y0, int x1, int y1)
     {
         var seen = new HashSet<(int, int)>();

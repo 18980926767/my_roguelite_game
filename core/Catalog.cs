@@ -109,6 +109,23 @@ public sealed class EnemySpec
     public float Weight { get; init; } = 1f;
     public bool Shoots { get; init; }
     public bool Dashes { get; init; }
+
+    public EnemySpec AtThreat(float threat)
+    {
+        var t = Math.Clamp(threat, 0f, 1f);
+        var grow = 0.28f + 1.35f * t;
+        return new EnemySpec
+        {
+            Name = Name,
+            MaxHp = Math.Max(6, (int)MathF.Round(MaxHp * grow)),
+            Defense = (int)MathF.Round(Defense * t),
+            Contact = Math.Max(2, (int)MathF.Round(Contact * (0.4f + t))),
+            Shield = (int)MathF.Round(Shield * t),
+            Weight = Weight,
+            Shoots = Shoots,
+            Dashes = Dashes,
+        };
+    }
 }
 
 public static class EnemyCatalog

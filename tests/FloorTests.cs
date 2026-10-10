@@ -19,6 +19,10 @@ public class FloorTests
             Assert.InRange(degree, 2, 3);
             Assert.True(map.Reachable(map.SpawnX, map.SpawnY, map.GateX, map.GateY), $"seed {seed} path");
             Assert.Equal(CellKind.Gate, map.Gate.Kind);
+            Assert.True(map.Threat(map.SpawnX, map.SpawnY) < map.Threat(map.GateX, map.GateY));
+            var nearStart = EnemyCatalog.Bullet.AtThreat(0f).MaxHp;
+            var nearGate = EnemyCatalog.Bullet.AtThreat(1f).MaxHp;
+            Assert.True(nearStart < nearGate);
             Assert.Equal(CellKind.Start, map.Spawn.Kind);
             Assert.True(map.Spawn.Visited);
         }
