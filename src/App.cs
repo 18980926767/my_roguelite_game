@@ -3,7 +3,7 @@ using Godot;
 
 namespace CaveCurse;
 
-public partial class App : Node
+public partial class App : Control
 {
     private readonly Random _rng = new();
     private RunState _run = null!;

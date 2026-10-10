@@ -71,6 +71,7 @@ public sealed partial class CombatView : Control
         _finished = finished;
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         ProcessMode = ProcessModeEnum.Always;
+        MouseFilter = MouseFilterEnum.Stop;
         var backdrop = UiKit.Panel(new Color("101018"));
         backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         backdrop.MouseFilter = MouseFilterEnum.Ignore;
