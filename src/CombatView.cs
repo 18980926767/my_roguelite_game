@@ -13,7 +13,10 @@ public sealed partial class CombatView : Control
         public Vector2 Pos;
         public int Hp;
         public int Shield;
-        public float Ai = 1f;
+        public float ActionIn = 1.2f;
+        public float Windup;
+        public Vector2 Locked;
+        public bool NextActionIsDash = true;
         public float Freeze;
         public float FreezePending;
         public float PoisonLeft;
@@ -218,6 +221,11 @@ public sealed partial class CombatView : Control
                 : foe.Spec.Dashes && !foe.Spec.Shoots ? new Color("e67e22") : new Color("e74c3c");
             if (foe.Spec.MaxHp > 80)
                 color = new Color("8e44ad");
+            if (foe.Windup > 0f)
+            {
+                color = new Color("f5d76e");
+                DrawLine(foe.Pos, foe.Locked, new Color("f5d76e"), 3f);
+            }
             DrawCircle(foe.Pos, 22, color);
             DrawString(UiKit.Font, foe.Pos + new Vector2(-18, 28), $"{foe.Hp}", fontSize: 14);
         }
@@ -461,23 +469,70 @@ public sealed partial class CombatView : Control
                 foe.Pos = ClampFoe(foe.Pos);
                 continue;
             }
-            foe.Ai -= dt;
-            if (foe.Ai > 0f)
+            if (foe.Windup > 0f)
+            {
+                foe.Windup -= dt;
+                if (foe.Windup <= 0f)
+                    BeginDash(foe);
                 continue;
-            if (foe.Spec.Shoots)
-            {
-                var dir = (_player - foe.Pos).Normalized();
-                _shots.Add(new Shot { Pos = foe.Pos, Vel = dir * 170f, Damage = 7 });
-                foe.Ai = 1.5f;
             }
-            if (foe.Spec.Dashes)
-            {
-                var dir = (_player - foe.Pos).Normalized();
-                foe.DashVel = dir * 280f;
-                foe.DashLeft = 0.32f;
-                foe.Ai = 2.1f;
-            }
+            TrackPlayer(foe, dt);
+            foe.ActionIn -= dt;
+            if (foe.ActionIn > 0f)
+                continue;
+            StartAction(foe);
         }
+    }
+
+    private void TrackPlayer(Foe foe, float dt)
+    {
+        var toPlayer = _player - foe.Pos;
+        var dist = toPlayer.Length();
+        if (dist < 1f)
+            return;
+        var prefer = foe.Spec.Dashes && !foe.Spec.Shoots ? 80f : foe.Spec.Shoots && !foe.Spec.Dashes ? 210f : 150f;
+        Vector2 wish;
+        if (dist > prefer + 24f)
+            wish = toPlayer / dist;
+        else if (dist < prefer - 24f)
+            wish = -toPlayer / dist;
+        else
+            wish = new Vector2(-toPlayer.Y, toPlayer.X) / dist;
+        var speed = foe.Spec.Dashes && !foe.Spec.Shoots ? 130f : 90f;
+        foe.Pos += wish * speed * dt;
+        foe.Pos = ClampFoe(foe.Pos);
+    }
+
+    private void StartAction(Foe foe)
+    {
+        var dash = foe.Spec.Dashes && (!foe.Spec.Shoots || foe.NextActionIsDash);
+        foe.NextActionIsDash = !foe.NextActionIsDash;
+        if (dash)
+        {
+            foe.Locked = _player;
+            foe.Windup = 0.45f;
+            foe.ActionIn = 2.2f;
+            return;
+        }
+        if (foe.Spec.Shoots)
+        {
+            var dir = (_player - foe.Pos).Normalized();
+            if (dir.LengthSquared() < 0.01f)
+                dir = Vector2.Down;
+            _shots.Add(new Shot { Pos = foe.Pos, Vel = dir * 170f, Damage = 7 });
+            foe.ActionIn = 1.6f;
+        }
+    }
+
+    private void BeginDash(Foe foe)
+    {
+        var dir = foe.Locked - foe.Pos;
+        if (dir.LengthSquared() < 4f)
+            dir = _player - foe.Pos;
+        if (dir.LengthSquared() < 1f)
+            dir = Vector2.Right;
+        foe.DashVel = dir.Normalized() * 340f;
+        foe.DashLeft = 0.38f;
     }
 
     private void TickShots(float dt)
