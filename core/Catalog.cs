@@ -84,21 +84,6 @@ public static class ShopCatalog
     }
 }
 
-public static class EventTable
-{
-    public static string Resolve(RunState run, Random rng)
-    {
-        if (rng.Next(100) < 90)
-        {
-            run.Gold += 100;
-            return "你赌赢了。获得 100 金币。";
-        }
-        run.MaxHp = 1;
-        run.Hp = 1;
-        return "你赌输了。生命上限变成 1。";
-    }
-}
-
 public sealed class EnemySpec
 {
     public required string Name { get; init; }

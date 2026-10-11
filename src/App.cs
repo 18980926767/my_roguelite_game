@@ -227,15 +227,30 @@ public partial class App : Control
     private void OpenEvent(FloorCell cell)
     {
         CloseOverlay();
-        var text = EventTable.Resolve(_run, _rng);
-        cell.EventUsed = true;
-        _explore.Refresh();
-        var box = Modal(text);
-        box.AddChild(UiKit.Button("离开", () =>
+        var mazeEvent = EventTable.For(cell);
+        var box = Modal($"{mazeEvent.Title}\n\n{mazeEvent.Body}");
+        foreach (var choice in mazeEvent.Choices)
         {
-            _explore.SetLog(text);
-            CloseOverlay();
-        }));
+            var captured = choice;
+            box.AddChild(UiKit.Button(captured.Label, () =>
+            {
+                var result = captured.Apply(_run, _rng);
+                if (result.Contains("箱子没有开"))
+                {
+                    _explore.SetLog(result);
+                    return;
+                }
+                cell.EventUsed = true;
+                _explore.Refresh();
+                CloseOverlay();
+                var done = Modal($"{mazeEvent.Title}\n\n{result}");
+                done.AddChild(UiKit.Button("离开", () =>
+                {
+                    _explore.SetLog(result);
+                    CloseOverlay();
+                }));
+            }));
+        }
     }
 
     private void ShowEnd(string title, string body)

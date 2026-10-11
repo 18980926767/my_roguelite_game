@@ -64,13 +64,13 @@ public class CombatTests
     }
 
     [Fact]
-    public void Event_CanDropMaxHpToOne()
+    public void CrackGamble_CanDropMaxHpToOne()
     {
         var found = false;
         for (var seed = 0; seed < 40 && !found; seed++)
         {
             var run = RunState.CreateNew();
-            EventTable.Resolve(run, new Random(seed));
+            EventTable.GambleInTheCrack(run, new Random(seed));
             if (run.MaxHp == 1)
             {
                 found = true;
@@ -78,6 +78,15 @@ public class CombatTests
             }
         }
         Assert.True(found);
+    }
+
+    [Fact]
+    public void Events_AreNotAllTheSameCoinFlip()
+    {
+        var titles = new HashSet<string>();
+        for (var y = 0; y < 6; y++)
+            titles.Add(EventTable.For(new FloorCell { X = y, Y = 1 }).Title);
+        Assert.True(titles.Count >= 3);
     }
 
     [Fact]
