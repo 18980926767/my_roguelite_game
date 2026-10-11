@@ -24,6 +24,8 @@ public sealed partial class CombatView : Control
         public float PoisonTick;
         public Vector2 DashVel;
         public float DashLeft;
+        public float OrbitAngle;
+        public float OrbitRetarget;
         public bool Alive => Hp > 0;
     }
 
@@ -86,12 +88,15 @@ public sealed partial class CombatView : Control
 
         foreach (var spec in specs)
         {
+            var index = _foes.Count;
             _foes.Add(new Foe
             {
                 Spec = spec,
                 Hp = spec.MaxHp,
                 Shield = spec.Shield,
                 Pos = Vector2.Zero,
+                OrbitAngle = index * 2.25f + 0.7f,
+                OrbitRetarget = 0.6f + index * 0.45f,
             });
         }
 
@@ -653,25 +658,72 @@ public sealed partial class CombatView : Control
                 continue;
             StartAction(foe);
         }
+        SeparateFoes();
     }
 
     private void TrackPlayer(Foe foe, float dt)
     {
-        var toPlayer = _player - foe.Pos;
-        var dist = toPlayer.Length();
-        if (dist < 1f)
+        foe.OrbitRetarget -= dt;
+        if (foe.OrbitRetarget <= 0f)
+        {
+            foe.OrbitAngle += 2.3f;
+            foe.OrbitRetarget = foe.Spec.MaxHp > 80 ? 2.5f : foe.Spec.Dashes && !foe.Spec.Shoots ? 1.45f : 1.9f;
+        }
+        var radius = OrbitRadius(foe);
+        var dest = _player + new Vector2(MathF.Cos(foe.OrbitAngle), MathF.Sin(foe.OrbitAngle)) * radius;
+        var to = dest - foe.Pos;
+        var dist = to.Length();
+        if (dist < 3f)
             return;
-        var prefer = foe.Spec.Dashes && !foe.Spec.Shoots ? 80f : foe.Spec.Shoots && !foe.Spec.Dashes ? 210f : 150f;
-        Vector2 wish;
-        if (dist > prefer + 24f)
-            wish = toPlayer / dist;
-        else if (dist < prefer - 24f)
-            wish = -toPlayer / dist;
-        else
-            wish = new Vector2(-toPlayer.Y, toPlayer.X) / dist;
         var speed = foe.Spec.Dashes && !foe.Spec.Shoots ? 130f : 90f;
-        foe.Pos += wish * speed * dt;
+        foe.Pos += to / dist * MathF.Min(dist, speed * dt);
         foe.Pos = ClampFoe(foe.Pos);
+    }
+
+    private static float OrbitRadius(Foe foe)
+    {
+        if (foe.Spec.MaxHp > 80)
+            return 176f;
+        if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            return 104f;
+        if (foe.Spec.Shoots && !foe.Spec.Dashes)
+            return 228f;
+        return 160f;
+    }
+
+    private void SeparateFoes()
+    {
+        for (var pass = 0; pass < 4; pass++)
+        {
+            for (var i = 0; i < _foes.Count; i++)
+            {
+                var a = _foes[i];
+                if (!a.Alive || a.DashLeft > 0f)
+                    continue;
+                for (var j = i + 1; j < _foes.Count; j++)
+                {
+                    var b = _foes[j];
+                    if (!b.Alive || b.DashLeft > 0f)
+                        continue;
+                    var delta = b.Pos - a.Pos;
+                    var dist = delta.Length();
+                    var need = CenterGap(a, b);
+                    if (dist >= need)
+                        continue;
+                    var push = dist < 0.5f ? Vector2.Right : delta / dist;
+                    var half = (need - MathF.Max(dist, 0.5f)) * 0.5f;
+                    a.Pos = ClampFoe(a.Pos - push * half);
+                    b.Pos = ClampFoe(b.Pos + push * half);
+                }
+            }
+        }
+    }
+
+    private static float CenterGap(Foe a, Foe b)
+    {
+        if (a.Spec.MaxHp > 80 || b.Spec.MaxHp > 80)
+            return 104f;
+        return 58f;
     }
 
     private void StartAction(Foe foe)
@@ -702,8 +754,9 @@ public sealed partial class CombatView : Control
             dir = _player - foe.Pos;
         if (dir.LengthSquared() < 1f)
             dir = Vector2.Right;
-        foe.DashVel = dir.Normalized() * 340f;
-        foe.DashLeft = 0.38f;
+        var smallCharge = foe.Spec.Dashes && !foe.Spec.Shoots;
+        foe.DashVel = dir.Normalized() * (smallCharge ? 560f : 340f);
+        foe.DashLeft = smallCharge ? 0.58f : 0.38f;
     }
 
     private void TickShots(float dt)
