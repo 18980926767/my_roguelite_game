@@ -56,6 +56,7 @@ public sealed partial class CombatView : Control
 
     private Phase _phase = Phase.Realtime;
     private Vector2 _player;
+    private Vector2 _face = Vector2.Down;
     private float _charge;
     private float _grace;
     private float _iframe;
@@ -204,30 +205,31 @@ public sealed partial class CombatView : Control
     public override void _Draw()
     {
         FitArena();
-        DrawRect(new Rect2(Vector2.Zero, Size), new Color("1a2030"));
-        DrawRect(_arena, new Color("7f97a8"));
-        DrawRect(_arena, new Color("e6d3a3"), false, 4);
+        DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
+        Look.Room(this, _arena);
         foreach (var shot in _shots)
         {
-            if (shot.Alive)
-                DrawCircle(shot.Pos, 6, new Color("f6e58d"));
+            if (!shot.Alive)
+                continue;
+            var tip = shot.Pos + shot.Vel.Normalized() * 8f;
+            DrawLine(shot.Pos, tip, new Color("f6e58d"), 3f);
+            DrawCircle(shot.Pos, 3, new Color("fff6c2"));
         }
         foreach (var foe in _foes)
         {
             if (!foe.Alive)
                 continue;
-            var color = foe.Freeze > 0f || _phase != Phase.Realtime
-                ? new Color("7fdbda")
-                : foe.Spec.Dashes && !foe.Spec.Shoots ? new Color("e67e22") : new Color("e74c3c");
+            var face = _player - foe.Pos;
+            var winding = foe.Windup > 0f;
             if (foe.Spec.MaxHp > 80)
-                color = new Color("8e44ad");
-            if (foe.Windup > 0f)
-                color = new Color("f5d76e");
-            DrawCircle(foe.Pos, 22, color);
-            DrawString(UiKit.Font, foe.Pos + new Vector2(-18, 28), $"{foe.Hp}", fontSize: 14);
+                Look.Boss(this, foe.Pos, face, winding);
+            else if (foe.Spec.Dashes && !foe.Spec.Shoots)
+                Look.Dasher(this, foe.Pos, face, winding);
+            else
+                Look.Shooter(this, foe.Pos, face, winding);
+            DrawString(UiKit.Font, foe.Pos + new Vector2(-10, 34), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
         }
-        DrawCircle(_player, 18, _playerFlash ? new Color("f7dc6f") : new Color("f7f3ea"));
-        DrawCircle(_player, 18, new Color("1b1b1b"), false, 2);
+        Look.Person(this, _player, _face);
         var bar = new Rect2(_arena.Position.X, _arena.Position.Y - 28, _arena.Size.X, 16);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
@@ -437,7 +439,10 @@ public sealed partial class CombatView : Control
         if (Input.IsKeyPressed(Key.W) || Input.IsKeyPressed(Key.Up)) input.Y -= 1;
         if (Input.IsKeyPressed(Key.S) || Input.IsKeyPressed(Key.Down)) input.Y += 1;
         if (input.LengthSquared() > 0f)
-            _player += input.Normalized() * _run.MoveSpeed * dt;
+        {
+            _face = input.Normalized();
+            _player += _face * _run.MoveSpeed * dt;
+        }
         ClampPlayer();
     }
 

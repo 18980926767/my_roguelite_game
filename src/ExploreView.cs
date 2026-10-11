@@ -17,6 +17,7 @@ public sealed partial class ExploreView : Control
     private int _x;
     private int _y;
     private Vector2 _player;
+    private Vector2 _face = Vector2.Down;
     private Dir? _atDoor;
     private Rect2 _room;
 
@@ -76,7 +77,10 @@ public sealed partial class ExploreView : Control
         if (Input.IsKeyPressed(Key.W) || Input.IsKeyPressed(Key.Up)) input.Y -= 1;
         if (Input.IsKeyPressed(Key.S) || Input.IsKeyPressed(Key.Down)) input.Y += 1;
         if (input.LengthSquared() > 0f)
-            _player += input.Normalized() * _run.MoveSpeed * (float)delta;
+        {
+            _face = input.Normalized();
+            _player += _face * _run.MoveSpeed * (float)delta;
+        }
         ClampPlayer();
         _atDoor = DoorUnderPlayer();
         var doorName = _atDoor == null ? "先走到门口" : NameOf(_atDoor.Value);
@@ -161,19 +165,15 @@ public sealed partial class ExploreView : Control
     public override void _Draw()
     {
         FitRoom();
-        DrawRect(_room, new Color("3e4c59"));
-        DrawRect(_room, new Color("d5c4a1"), false, 4);
+        Look.Room(this, _room);
         foreach (var dir in new[] { Dir.North, Dir.East, Dir.South, Dir.West })
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            var door = DoorRect(dir);
-            var near = _atDoor == dir;
-            DrawRect(door, near ? new Color("f2d48a") : new Color("8d6e63"));
+            Look.DoorGap(this, DoorRect(dir), _atDoor == dir);
         }
 
-        DrawCircle(_player, 16, new Color("f7f3ea"));
-        DrawCircle(_player, 16, new Color("1b1b1b"), false, 2);
+        Look.Person(this, _player, _face);
         DrawMinimap();
     }
 
