@@ -67,11 +67,8 @@ public sealed partial class CombatView : Control
     private Label _hud = null!;
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
-    private VBoxContainer _skillBar = null!;
-    private VBoxContainer _weaponBar = null!;
+    private Control _slots = null!;
     private VBoxContainer _itemBar = null!;
-    private bool _skillOpen;
-    private bool _weaponOpen;
     private bool _itemsOpen;
     private bool _aimBasic;
     private readonly List<Button> _actionButtons = new();
@@ -194,9 +191,17 @@ public sealed partial class CombatView : Control
     {
         var view = GetViewportRect().Size;
         var size = Size.X < view.X * 0.8f ? view : Size;
-        _arena = new Rect2(64, 132, Mathf.Max(480, size.X - 128), Mathf.Max(260, size.Y - 304));
+        const float slotX = 16f;
+        const float slotW = 236f;
+        var arenaX = slotX + slotW + 56f;
+        _arena = new Rect2(arenaX, 132, Mathf.Max(480, size.X - arenaX - 36), Mathf.Max(260, size.Y - 304));
         if (_actions != null)
-            _actions.Position = new Vector2(36, size.Y - 150);
+            _actions.Position = new Vector2(arenaX, size.Y - 120);
+        if (_slots != null)
+        {
+            _slots.Position = new Vector2(slotX, _arena.Position.Y);
+            _slots.Size = new Vector2(slotW, _arena.Size.Y);
+        }
         if (_placed)
             return;
         _player = _arena.GetCenter() + new Vector2(0, 90);
@@ -297,32 +302,9 @@ public sealed partial class CombatView : Control
             _aimBasic = true;
             QueueAttack(Nearest());
         });
-        AddAction("技能", () =>
-        {
-            _aimBasic = false;
-            ToggleSkills();
-        });
-        AddAction("武器", ToggleWeapons);
         AddAction("物品", ToggleItems);
         AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
-        _skillBar = new VBoxContainer();
-        _actions.AddChild(_skillBar);
-        var randomSkill = UiKit.Button("随机属性", QueueSkill);
-        randomSkill.CustomMinimumSize = new Vector2(220, 40);
-        _skillBar.AddChild(randomSkill);
-        _skillBar.Visible = false;
-        _weaponBar = new VBoxContainer();
-        _actions.AddChild(_weaponBar);
-        for (var slot = 0; slot < RunState.SlotCount; slot++)
-        {
-            var index = slot;
-            var button = UiKit.Button("空", () => SwapTo(index));
-            button.CustomMinimumSize = new Vector2(220, 40);
-            _slotButtons.Add(button);
-            _weaponBar.AddChild(button);
-        }
-        _weaponBar.Visible = false;
         _itemBar = new VBoxContainer();
         _actions.AddChild(_itemBar);
         var none = new Label
@@ -332,7 +314,84 @@ public sealed partial class CombatView : Control
         };
         _itemBar.AddChild(none);
         _itemBar.Visible = false;
+
+        _slots = new Control { MouseFilter = MouseFilterEnum.Ignore, Visible = false };
+        var chrome = UiKit.Chrome();
+        chrome.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _slots.AddChild(chrome);
+        var box = new VBoxContainer();
+        box.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        box.OffsetLeft = 14;
+        box.OffsetTop = 14;
+        box.OffsetRight = -14;
+        box.OffsetBottom = -14;
+        box.AddThemeConstantOverride("separation", 8);
+        box.MouseFilter = MouseFilterEnum.Stop;
+        _slots.AddChild(box);
+        box.AddChild(SlotHeading("技能槽"));
+        box.AddChild(SlotCell("随机属性", QueueSkill));
+        box.AddChild(SlotHeading("武器槽"));
+        for (var slot = 0; slot < RunState.SlotCount; slot++)
+        {
+            var index = slot;
+            var cell = SlotCell("空", () => SwapTo(index));
+            _slotButtons.Add(cell);
+            box.AddChild(cell);
+        }
+        AddChild(_slots);
         RefreshSlotButtons();
+    }
+
+    private static Label SlotHeading(string text)
+    {
+        return new Label
+        {
+            Text = text,
+            Theme = UiKit.Theme,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+    }
+
+    private static Button SlotCell(string text, Action onPressed)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Theme = UiKit.Theme,
+            ClipText = false,
+            CustomMinimumSize = new Vector2(200, 64),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        button.AddThemeStyleboxOverride("normal", SlotFrame(new Color("1a1612")));
+        button.AddThemeStyleboxOverride("hover", SlotFrame(new Color("2c261c")));
+        button.AddThemeStyleboxOverride("pressed", SlotFrame(new Color("3a3226")));
+        button.AddThemeStyleboxOverride("focus", SlotFrame(new Color("2c261c")));
+        button.AddThemeStyleboxOverride("disabled", SlotFrame(new Color("14110e"), new Color("6a6054")));
+        var ink = new Color("f3efe4");
+        button.AddThemeColorOverride("font_color", ink);
+        button.AddThemeColorOverride("font_hover_color", ink);
+        button.AddThemeColorOverride("font_pressed_color", ink);
+        button.AddThemeColorOverride("font_focus_color", ink);
+        button.AddThemeColorOverride("font_disabled_color", new Color("9a9080"));
+        button.Pressed += onPressed;
+        return button;
+    }
+
+    private static StyleBoxFlat SlotFrame(Color fill, Color? border = null)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = fill,
+            BorderColor = border ?? new Color("c4a574"),
+            BorderWidthLeft = 3,
+            BorderWidthTop = 3,
+            BorderWidthRight = 3,
+            BorderWidthBottom = 3,
+            ContentMarginLeft = 10,
+            ContentMarginTop = 8,
+            ContentMarginRight = 10,
+            ContentMarginBottom = 8,
+        };
     }
 
     private void RefreshSlotButtons()
@@ -355,7 +414,6 @@ public sealed partial class CombatView : Control
         }
         if (slot == _run.ActiveSlot)
         {
-            CloseWeaponList();
             Note($"已经拿着{weapon.Name}。");
             return;
         }
@@ -363,51 +421,13 @@ public sealed partial class CombatView : Control
         _run.ActiveSlot = slot;
         _queue.Add(new Plan { Kind = Act.Swap, Slot = previous, Text = $"切到{weapon.Name}" });
         RefreshSlotButtons();
-        CloseWeaponList();
         Note($"切到 {weapon.Name}。这不花行动点。");
-    }
-
-    private void ToggleWeapons()
-    {
-        _weaponOpen = !_weaponOpen;
-        if (_weaponOpen)
-            RefreshSlotButtons();
-        _weaponBar.Visible = _weaponOpen;
-        if (!_weaponOpen)
-            return;
-        _skillOpen = false;
-        _skillBar.Visible = false;
-        _itemsOpen = false;
-        _itemBar.Visible = false;
-    }
-
-    private void CloseWeaponList()
-    {
-        _weaponOpen = false;
-        if (_weaponBar != null)
-            _weaponBar.Visible = false;
     }
 
     private void ToggleItems()
     {
         _itemsOpen = !_itemsOpen;
         _itemBar.Visible = _itemsOpen;
-        if (!_itemsOpen)
-            return;
-        _skillOpen = false;
-        _skillBar.Visible = false;
-        CloseWeaponList();
-    }
-
-    private void ToggleSkills()
-    {
-        _skillOpen = !_skillOpen;
-        _skillBar.Visible = _skillOpen;
-        if (!_skillOpen)
-            return;
-        _itemsOpen = false;
-        _itemBar.Visible = false;
-        CloseWeaponList();
     }
 
     private void AddAction(string text, Action action)
@@ -420,21 +440,15 @@ public sealed partial class CombatView : Control
     private void SetFocusUi(bool on)
     {
         _actions.Visible = on;
-        if (!on && _skillBar != null)
-        {
-            _skillOpen = false;
-            _skillBar.Visible = false;
-        }
+        if (_slots != null)
+            _slots.Visible = on;
         if (!on && _itemBar != null)
         {
             _itemsOpen = false;
             _itemBar.Visible = false;
         }
         if (!on)
-        {
-            CloseWeaponList();
             _aimBasic = false;
-        }
     }
 
     private void QueueAttack(int index)
@@ -457,8 +471,6 @@ public sealed partial class CombatView : Control
         _run.Mana -= RunState.SkillManaCost;
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
-        _skillOpen = false;
-        _skillBar.Visible = false;
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
     }
 
