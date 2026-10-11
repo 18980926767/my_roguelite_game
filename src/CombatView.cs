@@ -24,6 +24,8 @@ public sealed partial class CombatView : Control
         public float PoisonTick;
         public Vector2 DashVel;
         public float DashLeft;
+        public float OrbitAngle;
+        public float OrbitRetarget;
         public bool Alive => Hp > 0;
     }
 
@@ -41,6 +43,7 @@ public sealed partial class CombatView : Control
     {
         public Act Kind;
         public int Target;
+        public int Slot;
         public string Text = "";
     }
 
@@ -66,9 +69,12 @@ public sealed partial class CombatView : Control
     private Label _hud = null!;
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
-    private VBoxContainer _skillBar = null!;
-    private bool _skillOpen;
+    private Control _slots = null!;
+    private VBoxContainer _itemBar = null!;
+    private bool _itemsOpen;
+    private bool _aimBasic;
     private readonly List<Button> _actionButtons = new();
+    private readonly List<Button> _slotButtons = new();
 
     public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished)
     {
@@ -78,24 +84,37 @@ public sealed partial class CombatView : Control
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         ProcessMode = ProcessModeEnum.Always;
         MouseFilter = MouseFilterEnum.Stop;
+        TextureFilter = TextureFilterEnum.Nearest;
 
         foreach (var spec in specs)
         {
+            var index = _foes.Count;
             _foes.Add(new Foe
             {
                 Spec = spec,
                 Hp = spec.MaxHp,
                 Shield = spec.Shield,
                 Pos = Vector2.Zero,
+                OrbitAngle = index * 2.25f + 0.7f,
+                OrbitRetarget = 0.6f + index * 0.45f,
             });
         }
 
         _hud = UiKit.Label("");
-        _hud.Position = new Vector2(24, 8);
+        _hud.SetAnchorsPreset(LayoutPreset.TopLeft);
+        _hud.OffsetLeft = 36;
+        _hud.OffsetTop = 10;
+        _hud.OffsetRight = 640;
+        _hud.OffsetBottom = 102;
+        _hud.ClipText = false;
         AddChild(_hud);
         _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格，可以一直不按。");
-        _logLabel.Position = new Vector2(520, 8);
-        _logLabel.CustomMinimumSize = new Vector2(480, 48);
+        _logLabel.SetAnchorsPreset(LayoutPreset.TopLeft);
+        _logLabel.OffsetLeft = 660;
+        _logLabel.OffsetTop = 10;
+        _logLabel.OffsetRight = 1248;
+        _logLabel.OffsetBottom = 58;
+        _logLabel.ClipText = false;
         AddChild(_logLabel);
         _actions = new GridContainer
         {
@@ -177,9 +196,17 @@ public sealed partial class CombatView : Control
     {
         var view = GetViewportRect().Size;
         var size = Size.X < view.X * 0.8f ? view : Size;
-        _arena = new Rect2(40, 78, Mathf.Max(480, size.X - 80), Mathf.Max(280, size.Y - 250));
+        const float slotX = 16f;
+        const float slotW = 236f;
+        var arenaX = slotX + slotW + 56f;
+        _arena = new Rect2(arenaX, 204, Mathf.Max(440, size.X - arenaX - 96), Mathf.Max(220, size.Y - 396));
         if (_actions != null)
-            _actions.Position = new Vector2(24, size.Y - 150);
+            _actions.Position = new Vector2(arenaX, size.Y - 120);
+        if (_slots != null)
+        {
+            _slots.Position = new Vector2(slotX, _arena.Position.Y);
+            _slots.Size = new Vector2(slotW, _arena.Size.Y);
+        }
         if (_placed)
             return;
         _player = _arena.GetCenter() + new Vector2(0, 90);
@@ -200,6 +227,7 @@ public sealed partial class CombatView : Control
         FitArena();
         DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
         Look.Room(this, _arena);
+        Look.Chrome(this, new Rect2(16, 6, Mathf.Max(32, Size.X - 32), 108));
         foreach (var shot in _shots)
         {
             if (!shot.Alive)
@@ -214,18 +242,47 @@ public sealed partial class CombatView : Control
                 continue;
             var face = _player - foe.Pos;
             var winding = foe.Windup > 0f;
-            if (foe.Spec.MaxHp > 80)
+            var boss = foe.Spec.MaxHp > 80;
+            var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+            if (boss)
                 Look.Boss(this, foe.Pos, face, winding);
-            else if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            else if (dasher)
                 Look.Dasher(this, foe.Pos, face, winding);
             else
                 Look.Shooter(this, foe.Pos, face, winding);
-            DrawString(UiKit.Font, foe.Pos + new Vector2(-10, 34), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
+            var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
+            DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
+            if (ShowingStrikePreview())
+                DrawStrikePreview(foe, boss, dasher);
         }
         Look.Person(this, _player, _face);
-        var bar = new Rect2(_arena.Position.X, _arena.Position.Y - 28, _arena.Size.X, 16);
+        var bar = new Rect2(_arena.Position.X, 128, _arena.Size.X, 14);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
+    }
+
+    private bool ShowingStrikePreview()
+    {
+        if (_phase != Phase.Focus)
+            return false;
+        if (_aimBasic)
+            return true;
+        return _queue.Any(plan => plan.Kind == Act.Attack);
+    }
+
+    private void DrawStrikePreview(Foe foe, bool boss, bool dasher)
+    {
+        var mult = _run.ActiveWeapon?.BasicMultiplier ?? 0.5f;
+        var raw = (int)MathF.Round(Math.Max(0f, _run.Attack * mult));
+        var actual = CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense);
+        var blocked = Math.Min(foe.Shield, actual);
+        var span = Look.FoeSpan(boss, dasher);
+        var x = Mathf.Clamp(foe.Pos.X - 52f, _arena.Position.X + 4f, _arena.End.X - 150f);
+        var y = Mathf.Clamp(foe.Pos.Y - span * 0.5f - 34f, _arena.Position.Y + 4f, _arena.End.Y - 36f);
+        DrawString(UiKit.Font, new Vector2(x, y), $"{raw} → {actual}", fontSize: 14, modulate: new Color("f7f3ea"));
+        if (blocked <= 0)
+            return;
+        DrawString(UiKit.Font, new Vector2(x, y + 16f), $"护盾 −{blocked}", fontSize: 14, modulate: new Color("f0d78c"));
     }
 
     private void BeginFocus()
@@ -234,8 +291,10 @@ public sealed partial class CombatView : Control
         Engine.TimeScale = 0;
         _ap = _run.ActionPoints;
         _queue.Clear();
+        _aimBasic = true;
         var nearest = Nearest();
         _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
+        RefreshSlotButtons();
         SetFocusUi(true);
         Note("时停。排出这一次行动，然后跳过。");
         RefreshHud();
@@ -243,23 +302,137 @@ public sealed partial class CombatView : Control
 
     private void BuildFocusButtons()
     {
-        AddAction("普攻最近的敌人", () => QueueAttack(Nearest()));
-        AddAction("技能", ToggleSkills);
-        AddAction("切换手持", QueueSwap);
+        AddAction("普攻最近的敌人", () =>
+        {
+            _aimBasic = true;
+            QueueAttack(Nearest());
+        });
+        AddAction("物品", ToggleItems);
         AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
-        _skillBar = new VBoxContainer();
-        _actions.AddChild(_skillBar);
-        var randomSkill = UiKit.Button("随机属性", QueueSkill);
-        randomSkill.CustomMinimumSize = new Vector2(220, 40);
-        _skillBar.AddChild(randomSkill);
-        _skillBar.Visible = false;
+        _itemBar = new VBoxContainer();
+        _actions.AddChild(_itemBar);
+        var none = new Label
+        {
+            Text = "没有物品",
+            Theme = UiKit.Theme,
+        };
+        _itemBar.AddChild(none);
+        _itemBar.Visible = false;
+
+        _slots = new Control { MouseFilter = MouseFilterEnum.Ignore, Visible = false };
+        var chrome = UiKit.Chrome();
+        chrome.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _slots.AddChild(chrome);
+        var box = new VBoxContainer();
+        box.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        box.OffsetLeft = 14;
+        box.OffsetTop = 14;
+        box.OffsetRight = -14;
+        box.OffsetBottom = -14;
+        box.AddThemeConstantOverride("separation", 8);
+        box.MouseFilter = MouseFilterEnum.Stop;
+        _slots.AddChild(box);
+        box.AddChild(SlotHeading("技能槽"));
+        box.AddChild(SlotCell("随机属性", QueueSkill));
+        box.AddChild(SlotHeading("武器槽"));
+        for (var slot = 0; slot < RunState.SlotCount; slot++)
+        {
+            var index = slot;
+            var cell = SlotCell("空", () => SwapTo(index));
+            _slotButtons.Add(cell);
+            box.AddChild(cell);
+        }
+        AddChild(_slots);
+        RefreshSlotButtons();
     }
 
-    private void ToggleSkills()
+    private static Label SlotHeading(string text)
     {
-        _skillOpen = !_skillOpen;
-        _skillBar.Visible = _skillOpen;
+        return new Label
+        {
+            Text = text,
+            Theme = UiKit.Theme,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+    }
+
+    private static Button SlotCell(string text, Action onPressed)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Theme = UiKit.Theme,
+            ClipText = false,
+            CustomMinimumSize = new Vector2(200, 64),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        button.AddThemeStyleboxOverride("normal", SlotFrame(new Color("1a1612")));
+        button.AddThemeStyleboxOverride("hover", SlotFrame(new Color("2c261c")));
+        button.AddThemeStyleboxOverride("pressed", SlotFrame(new Color("3a3226")));
+        button.AddThemeStyleboxOverride("focus", SlotFrame(new Color("2c261c")));
+        button.AddThemeStyleboxOverride("disabled", SlotFrame(new Color("14110e"), new Color("6a6054")));
+        var ink = new Color("f3efe4");
+        button.AddThemeColorOverride("font_color", ink);
+        button.AddThemeColorOverride("font_hover_color", ink);
+        button.AddThemeColorOverride("font_pressed_color", ink);
+        button.AddThemeColorOverride("font_focus_color", ink);
+        button.AddThemeColorOverride("font_disabled_color", new Color("9a9080"));
+        button.Pressed += onPressed;
+        return button;
+    }
+
+    private static StyleBoxFlat SlotFrame(Color fill, Color? border = null)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = fill,
+            BorderColor = border ?? new Color("c4a574"),
+            BorderWidthLeft = 3,
+            BorderWidthTop = 3,
+            BorderWidthRight = 3,
+            BorderWidthBottom = 3,
+            ContentMarginLeft = 10,
+            ContentMarginTop = 8,
+            ContentMarginRight = 10,
+            ContentMarginBottom = 8,
+        };
+    }
+
+    private void RefreshSlotButtons()
+    {
+        for (var slot = 0; slot < _slotButtons.Count; slot++)
+        {
+            var weapon = _run.Slots[slot];
+            _slotButtons[slot].Text = weapon?.Name ?? "空";
+            _slotButtons[slot].Disabled = weapon == null;
+        }
+    }
+
+    private void SwapTo(int slot)
+    {
+        var weapon = slot >= 0 && slot < _run.Slots.Length ? _run.Slots[slot] : null;
+        if (weapon == null)
+        {
+            Note("这个槽是空的。");
+            return;
+        }
+        if (slot == _run.ActiveSlot)
+        {
+            Note($"已经拿着{weapon.Name}。");
+            return;
+        }
+        var previous = _run.ActiveSlot;
+        _run.ActiveSlot = slot;
+        _queue.Add(new Plan { Kind = Act.Swap, Slot = previous, Text = $"切到{weapon.Name}" });
+        RefreshSlotButtons();
+        Note($"切到 {weapon.Name}。这不花行动点。");
+    }
+
+    private void ToggleItems()
+    {
+        _itemsOpen = !_itemsOpen;
+        _itemBar.Visible = _itemsOpen;
     }
 
     private void AddAction(string text, Action action)
@@ -272,11 +445,15 @@ public sealed partial class CombatView : Control
     private void SetFocusUi(bool on)
     {
         _actions.Visible = on;
-        if (!on && _skillBar != null)
+        if (_slots != null)
+            _slots.Visible = on;
+        if (!on && _itemBar != null)
         {
-            _skillOpen = false;
-            _skillBar.Visible = false;
+            _itemsOpen = false;
+            _itemBar.Visible = false;
         }
+        if (!on)
+            _aimBasic = false;
     }
 
     private void QueueAttack(int index)
@@ -299,23 +476,7 @@ public sealed partial class CombatView : Control
         _run.Mana -= RunState.SkillManaCost;
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
-        _skillOpen = false;
-        _skillBar.Visible = false;
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
-    }
-
-    private void QueueSwap()
-    {
-        var other = 1 - _run.ActiveSlot;
-        if (_run.Slots[other] == null && _run.Slots[_run.ActiveSlot] != null)
-        {
-            Note("另一个槽是空的。");
-            return;
-        }
-        _run.ActiveSlot = other;
-        var name = _run.ActiveWeapon?.Name ?? "空槽";
-        _queue.Add(new Plan { Kind = Act.Swap, Text = $"切到{name}" });
-        Note($"切到 {name}。这不花行动点。");
     }
 
     private void Undo()
@@ -327,7 +488,8 @@ public sealed partial class CombatView : Control
         if (last.Kind is Act.Attack or Act.Skill)
             _ap++;
         if (last.Kind == Act.Swap)
-            _run.ActiveSlot = 1 - _run.ActiveSlot;
+            _run.ActiveSlot = last.Slot;
+        RefreshSlotButtons();
         if (last.Kind == Act.Skill)
         {
             _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
@@ -496,25 +658,72 @@ public sealed partial class CombatView : Control
                 continue;
             StartAction(foe);
         }
+        SeparateFoes();
     }
 
     private void TrackPlayer(Foe foe, float dt)
     {
-        var toPlayer = _player - foe.Pos;
-        var dist = toPlayer.Length();
-        if (dist < 1f)
+        foe.OrbitRetarget -= dt;
+        if (foe.OrbitRetarget <= 0f)
+        {
+            foe.OrbitAngle += 2.3f;
+            foe.OrbitRetarget = foe.Spec.MaxHp > 80 ? 2.5f : foe.Spec.Dashes && !foe.Spec.Shoots ? 1.45f : 1.9f;
+        }
+        var radius = OrbitRadius(foe);
+        var dest = _player + new Vector2(MathF.Cos(foe.OrbitAngle), MathF.Sin(foe.OrbitAngle)) * radius;
+        var to = dest - foe.Pos;
+        var dist = to.Length();
+        if (dist < 3f)
             return;
-        var prefer = foe.Spec.Dashes && !foe.Spec.Shoots ? 80f : foe.Spec.Shoots && !foe.Spec.Dashes ? 210f : 150f;
-        Vector2 wish;
-        if (dist > prefer + 24f)
-            wish = toPlayer / dist;
-        else if (dist < prefer - 24f)
-            wish = -toPlayer / dist;
-        else
-            wish = new Vector2(-toPlayer.Y, toPlayer.X) / dist;
         var speed = foe.Spec.Dashes && !foe.Spec.Shoots ? 130f : 90f;
-        foe.Pos += wish * speed * dt;
+        foe.Pos += to / dist * MathF.Min(dist, speed * dt);
         foe.Pos = ClampFoe(foe.Pos);
+    }
+
+    private static float OrbitRadius(Foe foe)
+    {
+        if (foe.Spec.MaxHp > 80)
+            return 176f;
+        if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            return 104f;
+        if (foe.Spec.Shoots && !foe.Spec.Dashes)
+            return 228f;
+        return 160f;
+    }
+
+    private void SeparateFoes()
+    {
+        for (var pass = 0; pass < 4; pass++)
+        {
+            for (var i = 0; i < _foes.Count; i++)
+            {
+                var a = _foes[i];
+                if (!a.Alive || a.DashLeft > 0f)
+                    continue;
+                for (var j = i + 1; j < _foes.Count; j++)
+                {
+                    var b = _foes[j];
+                    if (!b.Alive || b.DashLeft > 0f)
+                        continue;
+                    var delta = b.Pos - a.Pos;
+                    var dist = delta.Length();
+                    var need = CenterGap(a, b);
+                    if (dist >= need)
+                        continue;
+                    var push = dist < 0.5f ? Vector2.Right : delta / dist;
+                    var half = (need - MathF.Max(dist, 0.5f)) * 0.5f;
+                    a.Pos = ClampFoe(a.Pos - push * half);
+                    b.Pos = ClampFoe(b.Pos + push * half);
+                }
+            }
+        }
+    }
+
+    private static float CenterGap(Foe a, Foe b)
+    {
+        if (a.Spec.MaxHp > 80 || b.Spec.MaxHp > 80)
+            return 104f;
+        return 58f;
     }
 
     private void StartAction(Foe foe)
@@ -545,8 +754,9 @@ public sealed partial class CombatView : Control
             dir = _player - foe.Pos;
         if (dir.LengthSquared() < 1f)
             dir = Vector2.Right;
-        foe.DashVel = dir.Normalized() * 340f;
-        foe.DashLeft = 0.38f;
+        var smallCharge = foe.Spec.Dashes && !foe.Spec.Shoots;
+        foe.DashVel = dir.Normalized() * (smallCharge ? 560f : 340f);
+        foe.DashLeft = smallCharge ? 0.58f : 0.38f;
     }
 
     private void TickShots(float dt)

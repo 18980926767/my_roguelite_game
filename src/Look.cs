@@ -4,71 +4,230 @@ namespace CaveCurse;
 
 public static class Look
 {
-    public static void Room(CanvasItem canvas, Rect2 room)
+    private const float Tile = 48f;
+    private const float Scale = 3f;
+    private static readonly Color Void = new("100c14");
+
+    public static float FoeSpan(bool boss, bool dasher)
     {
-        canvas.DrawRect(room.Grow(18), new Color("2a241c"));
-        var tile = 36f;
-        var col = 0;
-        for (var y = room.Position.Y; y < room.End.Y; y += tile)
-        {
-            var row = col;
-            for (var x = room.Position.X; x < room.End.X; x += tile)
-            {
-                var w = Mathf.Min(tile - 1, room.End.X - x);
-                var h = Mathf.Min(tile - 1, room.End.Y - y);
-                var shade = (row + col) % 2 == 0 ? new Color("6d7c86") : new Color("62727c");
-                canvas.DrawRect(new Rect2(x, y, w, h), shade);
-                row++;
-            }
-            col++;
-        }
+        var tex = boss ? Art.Boss : dasher ? Art.Dasher : Art.Shooter;
+        return tex.GetHeight() * Scale;
     }
 
-    public static void DoorGap(CanvasItem canvas, Rect2 door, bool near)
+    public static void Chrome(CanvasItem canvas, Rect2 rect)
     {
-        canvas.DrawRect(door.Grow(6), near ? new Color("f0d78c") : new Color("c4a574"));
-        canvas.DrawRect(door, new Color("1c1814"));
+        DrawNineSlice(canvas, Art.Panel, rect, 6f);
+    }
+
+    public static void Room(CanvasItem canvas, Rect2 room)
+    {
+        DrawFloor(canvas, room);
+        DrawStandingWalls(canvas, room);
+    }
+
+    public static void DoorGap(CanvasItem canvas, Rect2 door, bool near, Rect2 room)
+    {
+        var tint = near ? new Color(1f, 0.93f, 0.72f) : Colors.White;
+        if (door.Size.X >= door.Size.Y)
+        {
+            var north = door.GetCenter().Y < room.GetCenter().Y;
+            DrawFaceDoor(canvas, room, north, door.GetCenter().X, tint, near);
+            return;
+        }
+
+        var west = door.GetCenter().X < room.GetCenter().X;
+        DrawSideDoor(canvas, room, west, door.GetCenter().Y, tint, near);
     }
 
     public static void Person(CanvasItem canvas, Vector2 pos, Vector2 face)
     {
         if (face.LengthSquared() < 0.01f)
             face = Vector2.Down;
-        face = face.Normalized();
-        canvas.DrawCircle(pos + new Vector2(0, 6), 14, new Color(0, 0, 0, 0.35f));
-        canvas.DrawCircle(pos, 13, new Color("243042"));
-        canvas.DrawCircle(pos + face * 7f, 6, new Color("f3d2b3"));
-        canvas.DrawLine(pos, pos + face * 16f, new Color("d7c4a3"), 2f);
+        DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false);
     }
 
     public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        if (face.LengthSquared() < 0.01f)
-            face = Vector2.Down;
-        face = face.Normalized();
-        var body = winding ? new Color("f0d078") : new Color("c0392b");
-        canvas.DrawCircle(pos, 18, body);
-        canvas.DrawRect(new Rect2(pos + face * 8f - new Vector2(4, 4), new Vector2(16, 8)), new Color("2c2c2c"));
-        canvas.DrawCircle(pos + new Vector2(-5, -4), 3, new Color("f7f3ea"));
-        canvas.DrawCircle(pos + new Vector2(5, -4), 3, new Color("f7f3ea"));
+        DrawActor(canvas, Art.Shooter, pos, face.X < -0.01f, winding);
     }
 
     public static void Dasher(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        if (face.LengthSquared() < 0.01f)
-            face = Vector2.Down;
-        face = face.Normalized();
-        var side = new Vector2(-face.Y, face.X);
-        var nose = pos + face * 22f;
-        var left = pos - face * 14f + side * 14f;
-        var right = pos - face * 14f - side * 14f;
-        var color = winding ? new Color("f0d078") : new Color("d35400");
-        canvas.DrawColoredPolygon(new[] { nose, left, right }, color);
+        DrawActor(canvas, Art.Dasher, pos, face.X < -0.01f, winding);
     }
 
     public static void Boss(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        Shooter(canvas, pos, face, winding);
-        canvas.DrawArc(pos, 28, 0, Mathf.Tau, 24, new Color("8e44ad"), 3f);
+        DrawActor(canvas, Art.Boss, pos, face.X < -0.01f, winding);
+    }
+
+    private static void DrawFloor(CanvasItem canvas, Rect2 room)
+    {
+        for (var y = room.Position.Y; y < room.End.Y; y += Tile)
+        {
+            for (var x = room.Position.X; x < room.End.X; x += Tile)
+            {
+                var dest = new Rect2(x, y, Mathf.Min(Tile, room.End.X - x), Mathf.Min(Tile, room.End.Y - y));
+                var ix = Mathf.FloorToInt((x - room.Position.X) / Tile);
+                var iy = Mathf.FloorToInt((y - room.Position.Y) / Tile);
+                BlitFit(canvas, FloorAt(ix, iy), dest, Colors.White);
+            }
+        }
+    }
+
+    private static Texture2D FloorAt(int ix, int iy)
+    {
+        var n = (ix * 3 + iy * 5) & 3;
+        return n switch
+        {
+            0 => Art.FloorA,
+            1 => Art.FloorB,
+            2 => Art.FloorC,
+            _ => Art.FloorD,
+        };
+    }
+
+    private static void DrawStandingWalls(CanvasItem canvas, Rect2 room)
+    {
+        var x0 = room.Position.X;
+        var y0 = room.Position.Y;
+        var x1 = room.End.X;
+        var y1 = room.End.Y;
+        for (var x = x0; x < x1; x += Tile)
+        {
+            var w = Mathf.Min(Tile, x1 - x);
+            var left = x <= x0 + 0.5f;
+            var right = x + Tile >= x1 - 0.5f;
+            BlitFit(canvas, Face(left, right), new Rect2(x, y0 - Tile, w, Tile), Colors.White);
+            BlitFit(canvas, Cap(left, right), new Rect2(x, y0 - Tile * 2f, w, Tile), Colors.White);
+            BlitFit(canvas, Cap(left, right), new Rect2(x, y1 - Tile, w, Tile), Colors.White);
+            BlitFit(canvas, Face(left, right), new Rect2(x, y1, w, Tile), Colors.White);
+        }
+
+        DrawColumn(canvas, x0 - Tile, y0, y1, west: true);
+        DrawColumn(canvas, x1, y0, y1, west: false);
+    }
+
+    private static void DrawColumn(CanvasItem canvas, float x, float y0, float y1, bool west)
+    {
+        var face = west ? Art.WallFaceLeft : Art.WallFaceRight;
+        var cap = west ? Art.WallCapLeft : Art.WallCapRight;
+        Blit(canvas, cap, x, y0 - Tile * 2f, Colors.White);
+        for (var y = y0 - Tile; y < y1 + Tile; y += Tile)
+            Blit(canvas, face, x, y, Colors.White);
+    }
+
+    private static void DrawFaceDoor(CanvasItem canvas, Rect2 room, bool north, float centerX, Color tint, bool near)
+    {
+        var x = SnapSpan(centerX, room.Position.X, room.Position.X, room.End.X, 4);
+        var y = north ? room.Position.Y - Tile * 2f : room.End.Y - Tile;
+        canvas.DrawRect(new Rect2(x, y, Tile * 4f, Tile * 2f), Void);
+        Blit(canvas, Art.DoorJambLeft, x, y, tint);
+        Blit(canvas, Art.DoorOpen, x + Tile, y, tint);
+        Blit(canvas, Art.DoorJambRight, x + Tile * 3f, y, tint);
+        Blit(canvas, Art.DoorLintel, x + Tile, y - Tile, tint);
+        if (!near)
+            return;
+        canvas.DrawRect(new Rect2(x + Tile + 16f, y + 20f, Tile * 2f - 32f, Tile * 2f - 36f), new Color(1f, 0.84f, 0.4f, 0.34f));
+    }
+
+    private static void DrawSideDoor(CanvasItem canvas, Rect2 room, bool west, float centerY, Color tint, bool near)
+    {
+        var x = west ? room.Position.X - Tile : room.End.X;
+        var y = SnapSpan(centerY, room.Position.Y, room.Position.Y, room.End.Y, 2);
+        canvas.DrawRect(new Rect2(x, y, Tile, Tile * 2f), Void);
+        // The arch is the same front-facing opening, seated in this wall and a
+        // little wider than the column so the stone jambs stay visible.
+        var dest = new Rect2(x - 12f, y - 10f, Tile + 24f, Tile * 2f + 12f);
+        canvas.DrawTextureRect(Art.DoorOpen, dest, false, tint);
+        if (!near)
+            return;
+        canvas.DrawRect(new Rect2(x + 10f, y + 18f, Tile - 20f, Tile * 2f - 30f), new Color(1f, 0.84f, 0.4f, 0.34f));
+    }
+
+    private static Texture2D Face(bool left, bool right)
+    {
+        if (left)
+            return Art.WallFaceLeft;
+        if (right)
+            return Art.WallFaceRight;
+        return Art.WallFace;
+    }
+
+    private static Texture2D Cap(bool left, bool right)
+    {
+        if (left)
+            return Art.WallCapLeft;
+        if (right)
+            return Art.WallCapRight;
+        return Art.WallCap;
+    }
+
+    private static float SnapSpan(float center, float origin, float min, float max, int tiles)
+    {
+        var length = tiles * Tile;
+        var maxIndex = Mathf.Max(0, Mathf.FloorToInt((max - min - length) / Tile));
+        var index = Mathf.Clamp(Mathf.RoundToInt((center - length * 0.5f - origin) / Tile), 0, maxIndex);
+        return origin + index * Tile;
+    }
+
+    private static void Blit(CanvasItem canvas, Texture2D tex, float x, float y, Color tint)
+    {
+        var dest = new Rect2(x, y, tex.GetWidth() * Scale, tex.GetHeight() * Scale);
+        canvas.DrawTextureRect(tex, dest, false, tint);
+    }
+
+    private static void BlitFit(CanvasItem canvas, Texture2D tex, Rect2 dest, Color tint)
+    {
+        var fullW = tex.GetWidth() * Scale;
+        var fullH = tex.GetHeight() * Scale;
+        if (dest.Size.X >= fullW - 0.5f && dest.Size.Y >= fullH - 0.5f)
+        {
+            canvas.DrawTextureRect(tex, dest, false, tint);
+            return;
+        }
+
+        var src = new Rect2(0f, 0f, tex.GetWidth() * dest.Size.X / fullW, tex.GetHeight() * dest.Size.Y / fullH);
+        canvas.DrawTextureRectRegion(tex, dest, src, tint);
+    }
+
+    private static void DrawNineSlice(CanvasItem canvas, Texture2D tex, Rect2 rect, float srcMargin)
+    {
+        if (rect.Size.X < 4f || rect.Size.Y < 4f)
+            return;
+        var tw = tex.GetWidth();
+        var th = tex.GetHeight();
+        var margin = Mathf.Min(srcMargin, Mathf.Floor(Mathf.Min(rect.Size.X, rect.Size.Y) / 2f));
+        float[] srcX = { 0f, srcMargin, tw - srcMargin, tw };
+        float[] srcY = { 0f, srcMargin, th - srcMargin, th };
+        float[] dstX = { rect.Position.X, rect.Position.X + margin, rect.End.X - margin, rect.End.X };
+        float[] dstY = { rect.Position.Y, rect.Position.Y + margin, rect.End.Y - margin, rect.End.Y };
+        for (var row = 0; row < 3; row++)
+        {
+            for (var col = 0; col < 3; col++)
+            {
+                var dest = new Rect2(dstX[col], dstY[row], dstX[col + 1] - dstX[col], dstY[row + 1] - dstY[row]);
+                var src = new Rect2(srcX[col], srcY[row], srcX[col + 1] - srcX[col], srcY[row + 1] - srcY[row]);
+                if (dest.Size.X < 0.5f || dest.Size.Y < 0.5f)
+                    continue;
+                canvas.DrawTextureRectRegion(tex, dest, src);
+            }
+        }
+    }
+
+    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, bool flipX, bool winding)
+    {
+        var width = tex.GetWidth() * Scale;
+        var height = tex.GetHeight() * Scale;
+        var tint = winding ? new Color(1f, 0.88f, 0.55f) : Colors.White;
+        var rect = flipX
+            ? new Rect2(pos.X + width / 2f, pos.Y - height / 2f, -width, height)
+            : new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height);
+        canvas.DrawTextureRect(tex, rect, false, tint);
+        if (!winding)
+            return;
+        canvas.DrawRect(
+            new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height),
+            new Color(1f, 0.75f, 0.22f, 0.4f));
     }
 }

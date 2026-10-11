@@ -273,11 +273,19 @@ public partial class App : Control
             Size = new Vector2(720, 460),
             CustomMinimumSize = new Vector2(720, 200),
         };
+        var chrome = UiKit.Chrome();
+        chrome.Position = new Vector2(256, 116);
+        chrome.Size = new Vector2(768, 220);
+        dim.AddChild(chrome);
         dim.AddChild(box);
-        var panel = UiKit.Panel(new Color("242433"));
-        panel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        box.AddChild(panel);
         box.AddChild(UiKit.Label(text));
+        Callable.From(() =>
+        {
+            if (!IsInstanceValid(chrome) || !IsInstanceValid(box))
+                return;
+            var content = box.GetCombinedMinimumSize();
+            chrome.Size = new Vector2(768, Mathf.Max(120, content.Y + 48));
+        }).CallDeferred();
         return box;
     }
 

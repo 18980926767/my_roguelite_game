@@ -31,13 +31,23 @@ public sealed partial class ExploreView : Control
         _peek = peek;
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
+        TextureFilter = TextureFilterEnum.Nearest;
+
+        var hud = UiKit.Chrome();
+        hud.SetAnchorsPreset(LayoutPreset.TopWide);
+        hud.OffsetLeft = 16;
+        hud.OffsetTop = 8;
+        hud.OffsetRight = -16;
+        hud.OffsetBottom = 228;
+        AddChild(hud);
 
         var top = new VBoxContainer();
         top.SetAnchorsPreset(LayoutPreset.TopWide);
-        top.OffsetLeft = 24;
+        top.OffsetLeft = 36;
         top.OffsetTop = 12;
-        top.OffsetRight = -24;
-        top.OffsetBottom = 176;
+        top.OffsetRight = -36;
+        top.OffsetBottom = 220;
+        top.ClipContents = false;
         top.AddThemeConstantOverride("separation", 6);
         AddChild(top);
 
@@ -128,7 +138,7 @@ public sealed partial class ExploreView : Control
     private void FitRoom()
     {
         var size = Size.X < 200 ? GetViewportRect().Size : Size;
-        _room = new Rect2(48, 196, Mathf.Max(480, size.X - 96), Mathf.Max(320, size.Y - 230));
+        _room = new Rect2(72, 336, Mathf.Max(480, size.X - 160), Mathf.Max(220, size.Y - 468));
     }
 
     private void ClampPlayer()
@@ -165,12 +175,13 @@ public sealed partial class ExploreView : Control
     public override void _Draw()
     {
         FitRoom();
+        DrawRect(new Rect2(Vector2.Zero, Size), new Color("16141c"));
         Look.Room(this, _room);
         foreach (var dir in new[] { Dir.North, Dir.East, Dir.South, Dir.West })
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            Look.DoorGap(this, DoorRect(dir), _atDoor == dir);
+            Look.DoorGap(this, DoorRect(dir), _atDoor == dir, _room);
         }
 
         Look.Person(this, _player, _face);
