@@ -31,6 +31,15 @@ public sealed partial class ExploreView : Control
         _peek = peek;
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
+        TextureFilter = TextureFilterEnum.Nearest;
+
+        var hud = UiKit.Chrome();
+        hud.SetAnchorsPreset(LayoutPreset.TopWide);
+        hud.OffsetLeft = 12;
+        hud.OffsetTop = 6;
+        hud.OffsetRight = -12;
+        hud.OffsetBottom = 176;
+        AddChild(hud);
 
         var top = new VBoxContainer();
         top.SetAnchorsPreset(LayoutPreset.TopWide);
@@ -170,7 +179,7 @@ public sealed partial class ExploreView : Control
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            Look.DoorGap(this, DoorRect(dir), _atDoor == dir);
+            Look.DoorGap(this, DoorRect(dir), _atDoor == dir, _room);
         }
 
         Look.Person(this, _player, _face);

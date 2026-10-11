@@ -78,6 +78,7 @@ public sealed partial class CombatView : Control
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         ProcessMode = ProcessModeEnum.Always;
         MouseFilter = MouseFilterEnum.Stop;
+        TextureFilter = TextureFilterEnum.Nearest;
 
         foreach (var spec in specs)
         {
@@ -200,6 +201,7 @@ public sealed partial class CombatView : Control
         FitArena();
         DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
         Look.Room(this, _arena);
+        Look.Chrome(this, new Rect2(8, 2, Mathf.Max(32, Size.X - 16), 68));
         foreach (var shot in _shots)
         {
             if (!shot.Alive)
@@ -214,13 +216,16 @@ public sealed partial class CombatView : Control
                 continue;
             var face = _player - foe.Pos;
             var winding = foe.Windup > 0f;
-            if (foe.Spec.MaxHp > 80)
+            var boss = foe.Spec.MaxHp > 80;
+            var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+            if (boss)
                 Look.Boss(this, foe.Pos, face, winding);
-            else if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            else if (dasher)
                 Look.Dasher(this, foe.Pos, face, winding);
             else
                 Look.Shooter(this, foe.Pos, face, winding);
-            DrawString(UiKit.Font, foe.Pos + new Vector2(-10, 34), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
+            var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
+            DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
         }
         Look.Person(this, _player, _face);
         var bar = new Rect2(_arena.Position.X, _arena.Position.Y - 28, _arena.Size.X, 16);

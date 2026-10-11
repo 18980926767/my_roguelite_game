@@ -9,7 +9,7 @@
 
 ## 运行
 
-用 Godot 4.7 .NET 打开本目录的 `project.godot`，再按运行。
+用 Godot 4.7 .NET 打开本目录的 `project.godot`，再按运行。画面用 Kenney 的 CC0 图，说明在 [assets/CREDITS.md](assets/CREDITS.md)。像素图按最近邻显示。仓库里的 PNG 可以直接读；用编辑器打开后 Godot 会再生成 `.import`。
 
 规则库不依赖引擎，可以单独测：
 
