@@ -199,7 +199,7 @@ public sealed partial class CombatView : Control
         const float slotX = 16f;
         const float slotW = 236f;
         var arenaX = slotX + slotW + 56f;
-        _arena = new Rect2(arenaX, 132, Mathf.Max(480, size.X - arenaX - 36), Mathf.Max(260, size.Y - 304));
+        _arena = new Rect2(arenaX, 204, Mathf.Max(440, size.X - arenaX - 96), Mathf.Max(220, size.Y - 396));
         if (_actions != null)
             _actions.Position = new Vector2(arenaX, size.Y - 120);
         if (_slots != null)
@@ -256,7 +256,7 @@ public sealed partial class CombatView : Control
                 DrawStrikePreview(foe, boss, dasher);
         }
         Look.Person(this, _player, _face);
-        var bar = new Rect2(_arena.Position.X, 112, _arena.Size.X, 14);
+        var bar = new Rect2(_arena.Position.X, 128, _arena.Size.X, 14);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
     }

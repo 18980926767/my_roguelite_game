@@ -1,0 +1,13 @@
+16x16 DungeonTileset II
+by 0x72 (Robert)
+https://0x72.itch.io/dungeontileset-ii
+
+Asset license: Creative Commons Zero v1.0 Universal (CC0)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The itch.io page lists this pack as Creative Commons Zero v1.0 Universal.
+The author writes: "You can use this tileset for whatever you like (CC-0)."
+Credit is not required. This game credits 0x72 anyway.
+
+The download has no separate license file. This note records that CC0 statement.
+Only the tiles this game draws are in this folder. The original zip is not included.
