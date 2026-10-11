@@ -4,8 +4,8 @@ namespace CaveCurse;
 
 public static class Look
 {
-    private const float Tile = 32f;
-    private const float WallBand = 18f;
+    private const float Tile = 48f;
+    private const float WallBand = 48f;
     private const float PersonSize = 32f;
     private const float ShooterHeight = 46f;
     private const float DasherHeight = 44f;
@@ -25,19 +25,18 @@ public static class Look
 
     public static void Room(CanvasItem canvas, Rect2 room)
     {
-        TileFill(canvas, room.Grow(WallBand), Art.Wall, vary: false);
-        TileFill(canvas, room, Art.Floor, vary: true);
+        var origin = room.Position;
+        TileFill(canvas, room.Grow(WallBand), origin, Art.Wall, vary: false);
+        TileFill(canvas, room, origin, Art.FloorSpeck, vary: true);
     }
 
     public static void DoorGap(CanvasItem canvas, Rect2 door, bool near, Rect2 room)
     {
         var opening = Opening(door, room);
-        TileFill(canvas, opening, Art.Floor, vary: true);
+        TileFill(canvas, opening, room.Position, Art.FloorSpeck, vary: true);
         var tint = near ? new Color(1f, 0.93f, 0.72f) : Colors.White;
-        if (door.Size.X >= door.Size.Y)
-            DrawMark(canvas, Art.DoorArch, door.GetCenter(), 48f, tint);
-        else
-            canvas.DrawTextureRect(Art.DoorSide, opening, false, tint);
+        var mark = door.Size.X >= door.Size.Y ? Art.DoorArch : Art.DoorSide;
+        DrawMark(canvas, mark, door.GetCenter(), Tile, tint);
         if (near)
             canvas.DrawRect(opening, new Color(1f, 0.84f, 0.4f, 0.34f));
     }
@@ -46,23 +45,24 @@ public static class Look
     {
         if (face.LengthSquared() < 0.01f)
             face = Vector2.Down;
-        face = face.Normalized();
-        DrawActor(canvas, Art.Player, pos, face, PersonSize, rotate: true, winding: false);
+        // Tiny Dungeon characters are a single front view. Keep the head at the
+        // top of the screen in every direction. Left and right only mirror.
+        DrawUpright(canvas, Art.Player, pos, PersonSize, PersonSize, face.X < -0.01f, winding: false);
     }
 
     public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        DrawActor(canvas, Art.Shooter, pos, face, ShooterHeight, rotate: false, winding: winding);
+        DrawFoe(canvas, Art.Shooter, pos, face, ShooterHeight, winding);
     }
 
     public static void Dasher(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        DrawActor(canvas, Art.Dasher, pos, face, DasherHeight, rotate: false, winding: winding);
+        DrawFoe(canvas, Art.Dasher, pos, face, DasherHeight, winding);
     }
 
     public static void Boss(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
     {
-        DrawActor(canvas, Art.Boss, pos, face, BossHeight, rotate: false, winding: winding);
+        DrawFoe(canvas, Art.Boss, pos, face, BossHeight, winding);
     }
 
     private static Rect2 Opening(Rect2 door, Rect2 room)
@@ -81,12 +81,12 @@ public static class Look
         return new Rect2(x, door.Position.Y, right - x, door.Size.Y);
     }
 
-    private static void TileFill(CanvasItem canvas, Rect2 area, Texture2D primary, bool vary)
+    private static void TileFill(CanvasItem canvas, Rect2 area, Vector2 origin, Texture2D primary, bool vary)
     {
         if (area.Size.X < 1f || area.Size.Y < 1f)
             return;
-        var x0 = Mathf.Floor(area.Position.X / Tile) * Tile;
-        var y0 = Mathf.Floor(area.Position.Y / Tile) * Tile;
+        var x0 = origin.X + Mathf.Floor((area.Position.X - origin.X) / Tile) * Tile;
+        var y0 = origin.Y + Mathf.Floor((area.Position.Y - origin.Y) / Tile) * Tile;
         for (var y = y0; y < area.End.Y; y += Tile)
         {
             for (var x = x0; x < area.End.X; x += Tile)
@@ -96,17 +96,15 @@ public static class Look
                 if (visible.Size.X < 0.5f || visible.Size.Y < 0.5f)
                     continue;
                 var tex = primary;
-                if (vary && Speck(Mathf.FloorToInt(x / Tile), Mathf.FloorToInt(y / Tile)))
-                    tex = Art.FloorSpeck;
+                if (vary)
+                {
+                    var ix = Mathf.FloorToInt((x - origin.X) / Tile);
+                    var iy = Mathf.FloorToInt((y - origin.Y) / Tile);
+                    tex = ((ix + iy) & 1) == 0 ? Art.FloorSpeck : Art.FloorMottle;
+                }
                 DrawCell(canvas, tex, cell, visible);
             }
         }
-    }
-
-    private static bool Speck(int ix, int iy)
-    {
-        var n = (ix * 73856093) ^ (iy * 19349663);
-        return (n & 15) == 0;
     }
 
     private static void DrawCell(CanvasItem canvas, Texture2D tex, Rect2 cell, Rect2 visible)
@@ -159,19 +157,21 @@ public static class Look
         canvas.DrawTextureRect(tex, new Rect2(center.X - size / 2f, center.Y - size / 2f, size, size), false, tint);
     }
 
-    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, Vector2 face, float height, bool rotate, bool winding)
+    private static void DrawFoe(CanvasItem canvas, Texture2D tex, Vector2 pos, Vector2 face, float height, bool winding)
     {
         if (face.LengthSquared() < 0.01f)
             face = Vector2.Down;
-        face = face.Normalized();
         var aspect = tex.GetWidth() / (float)Mathf.Max(1, tex.GetHeight());
-        var width = height * aspect;
+        DrawUpright(canvas, tex, pos, height * aspect, height, face.X < -0.01f, winding);
+    }
+
+    private static void DrawUpright(CanvasItem canvas, Texture2D tex, Vector2 pos, float width, float height, bool flipX, bool winding)
+    {
         var tint = winding ? new Color(1f, 0.88f, 0.55f) : Colors.White;
-        var rotation = rotate ? face.Angle() - Mathf.Pi / 2f : 0f;
-        var flip = !rotate && face.X < 0f ? -1f : 1f;
-        canvas.DrawSetTransform(pos, rotation, new Vector2(flip, 1f));
-        canvas.DrawTextureRect(tex, new Rect2(-width / 2f, -height / 2f, width, height), false, tint);
-        canvas.DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        var rect = flipX
+            ? new Rect2(pos.X + width / 2f, pos.Y - height / 2f, -width, height)
+            : new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height);
+        canvas.DrawTextureRect(tex, rect, false, tint);
         if (!winding)
             return;
         canvas.DrawRect(

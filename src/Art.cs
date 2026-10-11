@@ -8,6 +8,7 @@ public static class Art
 
     public static Texture2D Floor => Get("res://assets/kenney/tiny-dungeon/floor.png");
     public static Texture2D FloorSpeck => Get("res://assets/kenney/tiny-dungeon/floor-speck.png");
+    public static Texture2D FloorMottle => Get("res://assets/kenney/tiny-dungeon/floor-mottle.png");
     public static Texture2D Wall => Get("res://assets/kenney/tiny-dungeon/wall.png");
     public static Texture2D DoorArch => Get("res://assets/kenney/tiny-dungeon/door-arch.png");
     public static Texture2D DoorSide => Get("res://assets/kenney/tiny-dungeon/door-side.png");

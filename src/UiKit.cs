@@ -81,8 +81,10 @@ public static class UiKit
             Text = text,
             Theme = Theme,
             AutowrapMode = TextServer.AutowrapMode.Off,
+            ClipText = false,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(640, 0),
         };
     }
 

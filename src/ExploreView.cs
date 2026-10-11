@@ -35,18 +35,19 @@ public sealed partial class ExploreView : Control
 
         var hud = UiKit.Chrome();
         hud.SetAnchorsPreset(LayoutPreset.TopWide);
-        hud.OffsetLeft = 12;
-        hud.OffsetTop = 6;
-        hud.OffsetRight = -12;
-        hud.OffsetBottom = 176;
+        hud.OffsetLeft = 16;
+        hud.OffsetTop = 8;
+        hud.OffsetRight = -16;
+        hud.OffsetBottom = 208;
         AddChild(hud);
 
         var top = new VBoxContainer();
         top.SetAnchorsPreset(LayoutPreset.TopWide);
-        top.OffsetLeft = 24;
-        top.OffsetTop = 12;
-        top.OffsetRight = -24;
-        top.OffsetBottom = 176;
+        top.OffsetLeft = 36;
+        top.OffsetTop = 16;
+        top.OffsetRight = -36;
+        top.OffsetBottom = 204;
+        top.ClipContents = false;
         top.AddThemeConstantOverride("separation", 6);
         AddChild(top);
 
@@ -137,7 +138,7 @@ public sealed partial class ExploreView : Control
     private void FitRoom()
     {
         var size = Size.X < 200 ? GetViewportRect().Size : Size;
-        _room = new Rect2(48, 196, Mathf.Max(480, size.X - 96), Mathf.Max(320, size.Y - 230));
+        _room = new Rect2(64, 220, Mathf.Max(480, size.X - 128), Mathf.Max(280, size.Y - 254));
     }
 
     private void ClampPlayer()

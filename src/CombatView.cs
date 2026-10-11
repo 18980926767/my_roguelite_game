@@ -92,11 +92,20 @@ public sealed partial class CombatView : Control
         }
 
         _hud = UiKit.Label("");
-        _hud.Position = new Vector2(24, 8);
+        _hud.SetAnchorsPreset(LayoutPreset.TopLeft);
+        _hud.OffsetLeft = 36;
+        _hud.OffsetTop = 10;
+        _hud.OffsetRight = 640;
+        _hud.OffsetBottom = 102;
+        _hud.ClipText = false;
         AddChild(_hud);
         _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格，可以一直不按。");
-        _logLabel.Position = new Vector2(520, 8);
-        _logLabel.CustomMinimumSize = new Vector2(480, 48);
+        _logLabel.SetAnchorsPreset(LayoutPreset.TopLeft);
+        _logLabel.OffsetLeft = 660;
+        _logLabel.OffsetTop = 10;
+        _logLabel.OffsetRight = 1248;
+        _logLabel.OffsetBottom = 58;
+        _logLabel.ClipText = false;
         AddChild(_logLabel);
         _actions = new GridContainer
         {
@@ -178,9 +187,9 @@ public sealed partial class CombatView : Control
     {
         var view = GetViewportRect().Size;
         var size = Size.X < view.X * 0.8f ? view : Size;
-        _arena = new Rect2(40, 78, Mathf.Max(480, size.X - 80), Mathf.Max(280, size.Y - 250));
+        _arena = new Rect2(64, 132, Mathf.Max(480, size.X - 128), Mathf.Max(260, size.Y - 304));
         if (_actions != null)
-            _actions.Position = new Vector2(24, size.Y - 150);
+            _actions.Position = new Vector2(36, size.Y - 150);
         if (_placed)
             return;
         _player = _arena.GetCenter() + new Vector2(0, 90);
@@ -201,7 +210,7 @@ public sealed partial class CombatView : Control
         FitArena();
         DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
         Look.Room(this, _arena);
-        Look.Chrome(this, new Rect2(8, 2, Mathf.Max(32, Size.X - 16), 68));
+        Look.Chrome(this, new Rect2(16, 6, Mathf.Max(32, Size.X - 32), 108));
         foreach (var shot in _shots)
         {
             if (!shot.Alive)
@@ -228,7 +237,7 @@ public sealed partial class CombatView : Control
             DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
         }
         Look.Person(this, _player, _face);
-        var bar = new Rect2(_arena.Position.X, _arena.Position.Y - 28, _arena.Size.X, 16);
+        var bar = new Rect2(_arena.Position.X, 112, _arena.Size.X, 14);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
     }
