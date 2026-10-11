@@ -41,6 +41,7 @@ public sealed partial class CombatView : Control
     {
         public Act Kind;
         public int Target;
+        public int Slot;
         public string Text = "";
     }
 
@@ -67,8 +68,14 @@ public sealed partial class CombatView : Control
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
     private VBoxContainer _skillBar = null!;
+    private VBoxContainer _weaponBar = null!;
+    private VBoxContainer _itemBar = null!;
     private bool _skillOpen;
+    private bool _weaponOpen;
+    private bool _itemsOpen;
+    private bool _aimBasic;
     private readonly List<Button> _actionButtons = new();
+    private readonly List<Button> _slotButtons = new();
 
     public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished)
     {
@@ -235,11 +242,37 @@ public sealed partial class CombatView : Control
                 Look.Shooter(this, foe.Pos, face, winding);
             var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
             DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
+            if (ShowingStrikePreview())
+                DrawStrikePreview(foe, boss, dasher);
         }
         Look.Person(this, _player, _face);
         var bar = new Rect2(_arena.Position.X, 112, _arena.Size.X, 14);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
+    }
+
+    private bool ShowingStrikePreview()
+    {
+        if (_phase != Phase.Focus)
+            return false;
+        if (_aimBasic)
+            return true;
+        return _queue.Any(plan => plan.Kind == Act.Attack);
+    }
+
+    private void DrawStrikePreview(Foe foe, bool boss, bool dasher)
+    {
+        var mult = _run.ActiveWeapon?.BasicMultiplier ?? 0.5f;
+        var raw = (int)MathF.Round(Math.Max(0f, _run.Attack * mult));
+        var actual = CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense);
+        var blocked = Math.Min(foe.Shield, actual);
+        var span = Look.FoeSpan(boss, dasher);
+        var x = Mathf.Clamp(foe.Pos.X - 52f, _arena.Position.X + 4f, _arena.End.X - 150f);
+        var y = Mathf.Clamp(foe.Pos.Y - span * 0.5f - 34f, _arena.Position.Y + 4f, _arena.End.Y - 36f);
+        DrawString(UiKit.Font, new Vector2(x, y), $"{raw} → {actual}", fontSize: 14, modulate: new Color("f7f3ea"));
+        if (blocked <= 0)
+            return;
+        DrawString(UiKit.Font, new Vector2(x, y + 16f), $"护盾 −{blocked}", fontSize: 14, modulate: new Color("f0d78c"));
     }
 
     private void BeginFocus()
@@ -248,8 +281,10 @@ public sealed partial class CombatView : Control
         Engine.TimeScale = 0;
         _ap = _run.ActionPoints;
         _queue.Clear();
+        _aimBasic = true;
         var nearest = Nearest();
         _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
+        RefreshSlotButtons();
         SetFocusUi(true);
         Note("时停。排出这一次行动，然后跳过。");
         RefreshHud();
@@ -257,9 +292,18 @@ public sealed partial class CombatView : Control
 
     private void BuildFocusButtons()
     {
-        AddAction("普攻最近的敌人", () => QueueAttack(Nearest()));
-        AddAction("技能", ToggleSkills);
-        AddAction("切换手持", QueueSwap);
+        AddAction("普攻最近的敌人", () =>
+        {
+            _aimBasic = true;
+            QueueAttack(Nearest());
+        });
+        AddAction("技能", () =>
+        {
+            _aimBasic = false;
+            ToggleSkills();
+        });
+        AddAction("武器", ToggleWeapons);
+        AddAction("物品", ToggleItems);
         AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
         _skillBar = new VBoxContainer();
@@ -268,12 +312,102 @@ public sealed partial class CombatView : Control
         randomSkill.CustomMinimumSize = new Vector2(220, 40);
         _skillBar.AddChild(randomSkill);
         _skillBar.Visible = false;
+        _weaponBar = new VBoxContainer();
+        _actions.AddChild(_weaponBar);
+        for (var slot = 0; slot < RunState.SlotCount; slot++)
+        {
+            var index = slot;
+            var button = UiKit.Button("空", () => SwapTo(index));
+            button.CustomMinimumSize = new Vector2(220, 40);
+            _slotButtons.Add(button);
+            _weaponBar.AddChild(button);
+        }
+        _weaponBar.Visible = false;
+        _itemBar = new VBoxContainer();
+        _actions.AddChild(_itemBar);
+        var none = new Label
+        {
+            Text = "没有物品",
+            Theme = UiKit.Theme,
+        };
+        _itemBar.AddChild(none);
+        _itemBar.Visible = false;
+        RefreshSlotButtons();
+    }
+
+    private void RefreshSlotButtons()
+    {
+        for (var slot = 0; slot < _slotButtons.Count; slot++)
+        {
+            var weapon = _run.Slots[slot];
+            _slotButtons[slot].Text = weapon?.Name ?? "空";
+            _slotButtons[slot].Disabled = weapon == null;
+        }
+    }
+
+    private void SwapTo(int slot)
+    {
+        var weapon = slot >= 0 && slot < _run.Slots.Length ? _run.Slots[slot] : null;
+        if (weapon == null)
+        {
+            Note("这个槽是空的。");
+            return;
+        }
+        if (slot == _run.ActiveSlot)
+        {
+            CloseWeaponList();
+            Note($"已经拿着{weapon.Name}。");
+            return;
+        }
+        var previous = _run.ActiveSlot;
+        _run.ActiveSlot = slot;
+        _queue.Add(new Plan { Kind = Act.Swap, Slot = previous, Text = $"切到{weapon.Name}" });
+        RefreshSlotButtons();
+        CloseWeaponList();
+        Note($"切到 {weapon.Name}。这不花行动点。");
+    }
+
+    private void ToggleWeapons()
+    {
+        _weaponOpen = !_weaponOpen;
+        if (_weaponOpen)
+            RefreshSlotButtons();
+        _weaponBar.Visible = _weaponOpen;
+        if (!_weaponOpen)
+            return;
+        _skillOpen = false;
+        _skillBar.Visible = false;
+        _itemsOpen = false;
+        _itemBar.Visible = false;
+    }
+
+    private void CloseWeaponList()
+    {
+        _weaponOpen = false;
+        if (_weaponBar != null)
+            _weaponBar.Visible = false;
+    }
+
+    private void ToggleItems()
+    {
+        _itemsOpen = !_itemsOpen;
+        _itemBar.Visible = _itemsOpen;
+        if (!_itemsOpen)
+            return;
+        _skillOpen = false;
+        _skillBar.Visible = false;
+        CloseWeaponList();
     }
 
     private void ToggleSkills()
     {
         _skillOpen = !_skillOpen;
         _skillBar.Visible = _skillOpen;
+        if (!_skillOpen)
+            return;
+        _itemsOpen = false;
+        _itemBar.Visible = false;
+        CloseWeaponList();
     }
 
     private void AddAction(string text, Action action)
@@ -290,6 +424,16 @@ public sealed partial class CombatView : Control
         {
             _skillOpen = false;
             _skillBar.Visible = false;
+        }
+        if (!on && _itemBar != null)
+        {
+            _itemsOpen = false;
+            _itemBar.Visible = false;
+        }
+        if (!on)
+        {
+            CloseWeaponList();
+            _aimBasic = false;
         }
     }
 
@@ -318,20 +462,6 @@ public sealed partial class CombatView : Control
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
     }
 
-    private void QueueSwap()
-    {
-        var other = 1 - _run.ActiveSlot;
-        if (_run.Slots[other] == null && _run.Slots[_run.ActiveSlot] != null)
-        {
-            Note("另一个槽是空的。");
-            return;
-        }
-        _run.ActiveSlot = other;
-        var name = _run.ActiveWeapon?.Name ?? "空槽";
-        _queue.Add(new Plan { Kind = Act.Swap, Text = $"切到{name}" });
-        Note($"切到 {name}。这不花行动点。");
-    }
-
     private void Undo()
     {
         if (_queue.Count == 0)
@@ -341,7 +471,8 @@ public sealed partial class CombatView : Control
         if (last.Kind is Act.Attack or Act.Skill)
             _ap++;
         if (last.Kind == Act.Swap)
-            _run.ActiveSlot = 1 - _run.ActiveSlot;
+            _run.ActiveSlot = last.Slot;
+        RefreshSlotButtons();
         if (last.Kind == Act.Skill)
         {
             _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
