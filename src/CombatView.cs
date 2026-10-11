@@ -137,14 +137,7 @@ public sealed partial class CombatView : Control
             if (_grace <= 0f)
             {
                 _phase = Phase.Realtime;
-                foreach (var foe in _foes)
-                {
-                    if (foe.FreezePending > 0f)
-                    {
-                        foe.Freeze = MathF.Max(foe.Freeze, foe.FreezePending);
-                        foe.FreezePending = 0f;
-                    }
-                }
+                ReleaseFreeze();
                 Note("时间恢复了。");
             }
         }
@@ -352,13 +345,32 @@ public sealed partial class CombatView : Control
             else if (plan.Kind == Act.Skill)
                 Note("随机属性：" + _run.ApplyRandomBonus(_rng));
         }
+        var extraPause = _ap >= 1;
         _queue.Clear();
         Engine.TimeScale = 1;
         _charge = 0;
-        _phase = Phase.Grace;
-        _grace = 2f;
         SetFocusUi(false);
-        Note("结算完了。接下来 2 秒只有你能走，碰到子弹和敌人仍会受伤。");
+        if (extraPause)
+        {
+            _phase = Phase.Grace;
+            _grace = 2f;
+            Note("结算时行动点还不少于 1。敌人再停 2 秒，只有你能走。碰到仍会受伤。");
+            return;
+        }
+        _phase = Phase.Realtime;
+        ReleaseFreeze();
+        Note("行动点已经用完。时间直接恢复。");
+    }
+
+    private void ReleaseFreeze()
+    {
+        foreach (var foe in _foes)
+        {
+            if (foe.FreezePending <= 0f)
+                continue;
+            foe.Freeze = MathF.Max(foe.Freeze, foe.FreezePending);
+            foe.FreezePending = 0f;
+        }
     }
 
     private void ResolveAttack(int index)
