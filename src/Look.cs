@@ -1,3 +1,4 @@
+using CaveCurse.Core;
 using Godot;
 
 namespace CaveCurse;
@@ -5,7 +6,8 @@ namespace CaveCurse;
 public static class Look
 {
     private const float Tile = 48f;
-    private const float Scale = 3f;
+    public const float ActorScale = 3f;
+    private const float Scale = ActorScale;
     private static readonly Color Void = new("100c14");
 
     public static float FoeSpan(bool boss, bool dasher)
@@ -25,40 +27,55 @@ public static class Look
         DrawStandingWalls(canvas, room);
     }
 
-    public static void DoorGap(CanvasItem canvas, Rect2 door, bool near, Rect2 room)
+    public static Rect2 DoorRect(Rect2 room, Dir dir)
     {
-        var tint = near ? new Color(1f, 0.93f, 0.72f) : Colors.White;
+        var center = room.GetCenter();
+        return dir switch
+        {
+            Dir.North => new Rect2(center.X - 46, room.Position.Y - 8, 92, 28),
+            Dir.South => new Rect2(center.X - 46, room.End.Y - 20, 92, 28),
+            Dir.West => new Rect2(room.Position.X - 8, center.Y - 46, 28, 92),
+            _ => new Rect2(room.End.X - 20, center.Y - 46, 28, 92),
+        };
+    }
+
+    public static void DoorGap(CanvasItem canvas, Rect2 door, bool near, Rect2 room, bool locked = false)
+    {
+        var glow = near && !locked;
+        var tint = locked
+            ? new Color(0.42f, 0.4f, 0.46f)
+            : glow ? new Color(1f, 0.93f, 0.72f) : Colors.White;
         if (door.Size.X >= door.Size.Y)
         {
             var north = door.GetCenter().Y < room.GetCenter().Y;
-            DrawFaceDoor(canvas, room, north, door.GetCenter().X, tint, near);
+            DrawFaceDoor(canvas, room, north, door.GetCenter().X, tint, glow, locked);
             return;
         }
 
         var west = door.GetCenter().X < room.GetCenter().X;
-        DrawSideDoor(canvas, room, west, door.GetCenter().Y, tint, near);
+        DrawSideDoor(canvas, room, west, door.GetCenter().Y, tint, glow, locked);
     }
 
-    public static void Person(CanvasItem canvas, Vector2 pos, Vector2 face)
+    public static void Person(CanvasItem canvas, Vector2 pos, Vector2 face, float scale = 1f, float flash = 0f, float alpha = 1f)
     {
         if (face.LengthSquared() < 0.01f)
             face = Vector2.Down;
-        DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false);
+        DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false, scale, flash, alpha);
     }
 
-    public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
+    public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding, float scale = 1f, float flash = 0f, float alpha = 1f)
     {
-        DrawActor(canvas, Art.Shooter, pos, face.X < -0.01f, winding);
+        DrawActor(canvas, Art.Shooter, pos, face.X < -0.01f, winding, scale, flash, alpha);
     }
 
-    public static void Dasher(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
+    public static void Dasher(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding, float scale = 1f, float flash = 0f, float alpha = 1f)
     {
-        DrawActor(canvas, Art.Dasher, pos, face.X < -0.01f, winding);
+        DrawActor(canvas, Art.Dasher, pos, face.X < -0.01f, winding, scale, flash, alpha);
     }
 
-    public static void Boss(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
+    public static void Boss(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding, float scale = 1f, float flash = 0f, float alpha = 1f)
     {
-        DrawActor(canvas, Art.Boss, pos, face.X < -0.01f, winding);
+        DrawActor(canvas, Art.Boss, pos, face.X < -0.01f, winding, scale, flash, alpha);
     }
 
     private static void DrawFloor(CanvasItem canvas, Rect2 room)
@@ -117,7 +134,7 @@ public static class Look
             Blit(canvas, face, x, y, Colors.White);
     }
 
-    private static void DrawFaceDoor(CanvasItem canvas, Rect2 room, bool north, float centerX, Color tint, bool near)
+    private static void DrawFaceDoor(CanvasItem canvas, Rect2 room, bool north, float centerX, Color tint, bool glow, bool locked)
     {
         var x = SnapSpan(centerX, room.Position.X, room.Position.X, room.End.X, 4);
         var y = north ? room.Position.Y - Tile * 2f : room.End.Y - Tile;
@@ -126,12 +143,14 @@ public static class Look
         Blit(canvas, Art.DoorOpen, x + Tile, y, tint);
         Blit(canvas, Art.DoorJambRight, x + Tile * 3f, y, tint);
         Blit(canvas, Art.DoorLintel, x + Tile, y - Tile, tint);
-        if (!near)
+        if (locked)
+            canvas.DrawRect(new Rect2(x + Tile + 8f, y + 16f, Tile * 2f - 16f, Tile * 2f - 28f), new Color(0.05f, 0.04f, 0.07f, 0.62f));
+        if (!glow)
             return;
         canvas.DrawRect(new Rect2(x + Tile + 16f, y + 20f, Tile * 2f - 32f, Tile * 2f - 36f), new Color(1f, 0.84f, 0.4f, 0.34f));
     }
 
-    private static void DrawSideDoor(CanvasItem canvas, Rect2 room, bool west, float centerY, Color tint, bool near)
+    private static void DrawSideDoor(CanvasItem canvas, Rect2 room, bool west, float centerY, Color tint, bool glow, bool locked)
     {
         var x = west ? room.Position.X - Tile : room.End.X;
         var y = SnapSpan(centerY, room.Position.Y, room.Position.Y, room.End.Y, 2);
@@ -140,7 +159,9 @@ public static class Look
         // little wider than the column so the stone jambs stay visible.
         var dest = new Rect2(x - 12f, y - 10f, Tile + 24f, Tile * 2f + 12f);
         canvas.DrawTextureRect(Art.DoorOpen, dest, false, tint);
-        if (!near)
+        if (locked)
+            canvas.DrawRect(new Rect2(x + 6f, y + 16f, Tile - 12f, Tile * 2f - 28f), new Color(0.05f, 0.04f, 0.07f, 0.62f));
+        if (!glow)
             return;
         canvas.DrawRect(new Rect2(x + 10f, y + 18f, Tile - 20f, Tile * 2f - 30f), new Color(1f, 0.84f, 0.4f, 0.34f));
     }
@@ -215,19 +236,27 @@ public static class Look
         }
     }
 
-    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, bool flipX, bool winding)
+    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, bool flipX, bool winding, float scale, float flash, float alpha)
     {
-        var width = tex.GetWidth() * Scale;
-        var height = tex.GetHeight() * Scale;
-        var tint = winding ? new Color(1f, 0.88f, 0.55f) : Colors.White;
+        scale = Mathf.Max(0.05f, scale);
+        alpha = Mathf.Clamp(alpha, 0f, 1f);
+        var width = tex.GetWidth() * Scale * scale;
+        var height = tex.GetHeight() * Scale * scale;
+        var tint = winding ? new Color(1f, 0.88f, 0.55f, alpha) : new Color(1f, 1f, 1f, alpha);
         var rect = flipX
             ? new Rect2(pos.X + width / 2f, pos.Y - height / 2f, -width, height)
             : new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height);
         canvas.DrawTextureRect(tex, rect, false, tint);
-        if (!winding)
+        if (winding)
+        {
+            canvas.DrawRect(
+                new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height),
+                new Color(1f, 0.75f, 0.22f, 0.4f * alpha));
+        }
+        if (flash <= 0.02f)
             return;
         canvas.DrawRect(
             new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height),
-            new Color(1f, 0.75f, 0.22f, 0.4f));
+            new Color(1f, 0.97f, 0.9f, 0.55f * Mathf.Clamp(flash, 0f, 1f) * alpha));
     }
 }

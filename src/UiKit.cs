@@ -94,6 +94,7 @@ public static class UiKit
         {
             Text = text,
             Theme = Theme,
+            FocusMode = Control.FocusModeEnum.None,
             CustomMinimumSize = new Vector2(0, 36),
         };
         button.Pressed += onPressed;

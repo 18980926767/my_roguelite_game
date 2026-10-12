@@ -26,7 +26,19 @@ public sealed partial class CombatView : Control
         public float DashLeft;
         public float OrbitAngle;
         public float OrbitRetarget;
+        public float HitFlash;
+        public float HitPunch;
+        public float DeathLeft;
+        public bool DeathPlayed;
         public bool Alive => Hp > 0;
+    }
+
+    private sealed class Pop
+    {
+        public Vector2 Pos;
+        public string Text = "";
+        public Color Color;
+        public float Age;
     }
 
     private sealed class Shot
@@ -65,7 +77,18 @@ public sealed partial class CombatView : Control
     private float _iframe;
     private int _ap;
     private bool _ended;
-    private bool _playerFlash;
+    private float _hurtFlash;
+    private float _swing;
+    private float _shake;
+    private float _hitStop;
+    private readonly ClearBeat _clear = new();
+    private readonly List<Pop> _pops = new();
+    private readonly Dir[] _exits;
+    private const float PortraitSeconds = 0.46f;
+    private float _portraitLeft;
+    private int _portraitFoe = -1;
+    private bool _portraitSword;
+    private ulong _realClock;
     private Label _hud = null!;
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
@@ -75,12 +98,17 @@ public sealed partial class CombatView : Control
     private bool _aimBasic;
     private readonly List<Button> _actionButtons = new();
     private readonly List<Button> _slotButtons = new();
+    private readonly ChoiceList _choices = new();
+    private int _target = -1;
+    private const int CommitChoice = 2;
+    private const int SlotChoice = 4;
 
-    public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished)
+    public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished, IReadOnlyList<Dir> exits)
     {
         _run = run;
         _rng = rng;
         _finished = finished;
+        _exits = exits.ToArray();
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         ProcessMode = ProcessModeEnum.Always;
         MouseFilter = MouseFilterEnum.Stop;
@@ -108,7 +136,7 @@ public sealed partial class CombatView : Control
         _hud.OffsetBottom = 102;
         _hud.ClipText = false;
         AddChild(_hud);
-        _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格，可以一直不按。");
+        _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格、J 或回车进入时停，可以一直不按。");
         _logLabel.SetAnchorsPreset(LayoutPreset.TopLeft);
         _logLabel.OffsetLeft = 660;
         _logLabel.OffsetTop = 10;
@@ -136,6 +164,39 @@ public sealed partial class CombatView : Control
         var dt = (float)delta;
         if (_iframe > 0)
             _iframe -= dt;
+        TickJuice(MathF.Min(dt, 0.05f));
+        // Time-stop sets Engine.TimeScale to 0, so the cut-in advances on real time.
+        TickPortrait(RealSlice());
+
+        if (_clear.Running)
+        {
+            _hitStop = 0f;
+            _clear.Tick(MathF.Min(dt, 0.05f));
+            if (_clear.Done)
+            {
+                FinishClear();
+                return;
+            }
+            RefreshHud();
+            QueueRedraw();
+            return;
+        }
+
+        if (RoomCleared())
+        {
+            BeginClear();
+            RefreshHud();
+            QueueRedraw();
+            return;
+        }
+
+        if (_hitStop > 0f)
+        {
+            _hitStop = MathF.Max(0f, _hitStop - MathF.Min(dt, 0.05f));
+            RefreshHud();
+            QueueRedraw();
+            return;
+        }
 
         if (_phase == Phase.Realtime)
         {
@@ -166,17 +227,11 @@ public sealed partial class CombatView : Control
             End(false, "你倒下了。这一局结束。");
             return;
         }
-        if (_foes.All(foe => !foe.Alive))
+        if (RoomCleared())
         {
-            var gold = Loot.GoldFor(_foes.Count);
-            _run.Gold += gold;
-            var extra = "";
-            if (Loot.RollsMana(_rng))
-            {
-                _run.Mana = Math.Min(_run.MaxMana, _run.Mana + Loot.ManaFromLoot);
-                extra = $" 蓝 +{Loot.ManaFromLoot}。";
-            }
-            End(true, $"战斗结束。获得 {gold} 金币。{extra}");
+            BeginClear();
+            RefreshHud();
+            QueueRedraw();
             return;
         }
 
@@ -186,10 +241,56 @@ public sealed partial class CombatView : Control
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (_ended || _phase != Phase.Realtime || _charge < 1f)
+        if (_ended || _portraitLeft > 0f || _clear.Running || _clear.Done || _hitStop > 0f)
             return;
-        if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Space })
+        if (@event is not InputEventKey key)
+            return;
+        if (_phase == Phase.Focus)
+        {
+            HandleFocusKey(key);
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (_phase == Phase.Realtime && _charge >= 1f && Keys.Confirm(key))
+        {
             BeginFocus();
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    private void HandleFocusKey(InputEventKey key)
+    {
+        var tab = Keys.Tab(key);
+        if (tab != 0)
+        {
+            CycleTarget(tab);
+            return;
+        }
+        if (Keys.Previous(key))
+        {
+            _choices.Move(-1);
+            return;
+        }
+        if (Keys.Next(key))
+        {
+            _choices.Move(1);
+            return;
+        }
+        if (Keys.Confirm(key))
+        {
+            if (_choices.SelectedDisabled)
+                Note("现在选不了这个。");
+            else
+                _choices.Confirm();
+            return;
+        }
+        if (Keys.Cancel(key))
+        {
+            CancelFocus();
+            return;
+        }
+        if (Keys.Digit(key) is int number && !_choices.PressNumber(number) && number <= _choices.Count)
+            Note("现在选不了这个。");
     }
 
     private void FitArena()
@@ -226,8 +327,14 @@ public sealed partial class CombatView : Control
     {
         FitArena();
         DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
-        Look.Room(this, _arena);
         Look.Chrome(this, new Rect2(16, 6, Mathf.Max(32, Size.X - 32), 108));
+        var bar = new Rect2(_arena.Position.X, 128, _arena.Size.X, 14);
+        DrawRect(bar, new Color("2c2c38"));
+        DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
+        DrawSetTransform(ShakeOffset(), 0f, Vector2.One);
+        Look.Room(this, _arena);
+        foreach (var dir in _exits)
+            Look.DoorGap(this, Look.DoorRect(_arena, dir), _clear.DoorsOpen, _arena, !_clear.DoorsOpen);
         foreach (var shot in _shots)
         {
             if (!shot.Alive)
@@ -236,29 +343,15 @@ public sealed partial class CombatView : Control
             DrawLine(shot.Pos, tip, new Color("f6e58d"), 3f);
             DrawCircle(shot.Pos, 3, new Color("fff6c2"));
         }
-        foreach (var foe in _foes)
-        {
-            if (!foe.Alive)
-                continue;
-            var face = _player - foe.Pos;
-            var winding = foe.Windup > 0f;
-            var boss = foe.Spec.MaxHp > 80;
-            var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
-            if (boss)
-                Look.Boss(this, foe.Pos, face, winding);
-            else if (dasher)
-                Look.Dasher(this, foe.Pos, face, winding);
-            else
-                Look.Shooter(this, foe.Pos, face, winding);
-            var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
-            DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
-            if (ShowingStrikePreview())
-                DrawStrikePreview(foe, boss, dasher);
-        }
-        Look.Person(this, _player, _face);
-        var bar = new Rect2(_arena.Position.X, 128, _arena.Size.X, 14);
-        DrawRect(bar, new Color("2c2c38"));
-        DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
+        for (var i = 0; i < _foes.Count; i++)
+            DrawFoe(_foes[i], _phase == Phase.Focus && i == AttackTarget());
+        var swing = 1f + Unit(_swing, CombatFeel.HitPunchSeconds) * 0.1f;
+        Look.Person(this, _player, _face, swing, Unit(_hurtFlash, CombatFeel.HitFlashSeconds));
+        DrawPops();
+        if (_clear.Running)
+            DrawClearBanner();
+        DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        DrawPortrait();
     }
 
     private bool ShowingStrikePreview()
@@ -287,28 +380,32 @@ public sealed partial class CombatView : Control
 
     private void BeginFocus()
     {
+        if (_clear.Running || _clear.Done || _hitStop > 0f)
+            return;
         _phase = Phase.Focus;
         Engine.TimeScale = 0;
         _ap = _run.ActionPoints;
         _queue.Clear();
         _aimBasic = true;
-        var nearest = Nearest();
-        _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
+        _portraitLeft = 0f;
+        _portraitFoe = -1;
+        _target = Nearest();
+        RefreshAttackLabel();
         RefreshSlotButtons();
+        _choices.Index = 0;
         SetFocusUi(true);
-        Note("时停。排出这一次行动，然后跳过。");
+        Note("时停。[Tab] 换目标。方向键选按钮，[J] 确认，数字键直选，[Esc] 取消。");
         RefreshHud();
     }
 
     private void BuildFocusButtons()
     {
-        AddAction("普攻最近的敌人", () =>
+        AddAction("普攻", () =>
         {
             _aimBasic = true;
-            QueueAttack(Nearest());
+            QueueAttack(AttackTarget());
         });
         AddAction("物品", ToggleItems);
-        AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
         _itemBar = new VBoxContainer();
         _actions.AddChild(_itemBar);
@@ -334,13 +431,16 @@ public sealed partial class CombatView : Control
         box.MouseFilter = MouseFilterEnum.Stop;
         _slots.AddChild(box);
         box.AddChild(SlotHeading("技能槽"));
-        box.AddChild(SlotCell("随机属性", QueueSkill));
+        var skill = SlotCell("随机属性", QueueSkill);
+        box.AddChild(skill);
+        _choices.Add(skill, "随机属性", QueueSkill);
         box.AddChild(SlotHeading("武器槽"));
         for (var slot = 0; slot < RunState.SlotCount; slot++)
         {
             var index = slot;
             var cell = SlotCell("空", () => SwapTo(index));
             _slotButtons.Add(cell);
+            _choices.Add(cell, "空", () => SwapTo(index));
             box.AddChild(cell);
         }
         AddChild(_slots);
@@ -364,6 +464,7 @@ public sealed partial class CombatView : Control
             Text = text,
             Theme = UiKit.Theme,
             ClipText = false,
+            FocusMode = FocusModeEnum.None,
             CustomMinimumSize = new Vector2(200, 64),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
@@ -404,9 +505,38 @@ public sealed partial class CombatView : Control
         for (var slot = 0; slot < _slotButtons.Count; slot++)
         {
             var weapon = _run.Slots[slot];
-            _slotButtons[slot].Text = weapon?.Name ?? "空";
             _slotButtons[slot].Disabled = weapon == null;
+            _choices.SetLabel(SlotChoice + slot, weapon?.Name ?? "空");
         }
+    }
+
+    private void RefreshAttackLabel()
+    {
+        var index = AttackTarget();
+        var name = index >= 0 ? _foes[index].Spec.Name : "没有目标";
+        _choices.SetLabel(0, $"普攻 {name}");
+    }
+
+    private int AttackTarget()
+    {
+        if (_target >= 0 && _target < _foes.Count && _foes[_target].Alive)
+            return _target;
+        return Nearest();
+    }
+
+    private void CycleTarget(int dir)
+    {
+        if (_foes.Count == 0)
+            return;
+        if (_target < 0)
+            _target = 0;
+        for (var n = 0; n < _foes.Count; n++)
+        {
+            _target = (_target + dir + _foes.Count) % _foes.Count;
+            if (_foes[_target].Alive)
+                break;
+        }
+        RefreshAttackLabel();
     }
 
     private void SwapTo(int slot)
@@ -440,6 +570,7 @@ public sealed partial class CombatView : Control
         var button = UiKit.Button(text, action);
         _actionButtons.Add(button);
         _actions.AddChild(button);
+        _choices.Add(button, text, action);
     }
 
     private void SetFocusUi(bool on)
@@ -458,11 +589,14 @@ public sealed partial class CombatView : Control
 
     private void QueueAttack(int index)
     {
-        if (_ap <= 0 || index < 0)
+        if (_portraitLeft > 0f || _ap <= 0 || index < 0)
             return;
         _ap--;
         _queue.Add(new Plan { Kind = Act.Attack, Target = index, Text = $"普攻 {_foes[index].Spec.Name}" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
+        BeginPortrait(index);
+        if (_ap <= 0)
+            _choices.Index = CommitChoice;
     }
 
     private void QueueSkill()
@@ -477,12 +611,24 @@ public sealed partial class CombatView : Control
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
+        if (_ap <= 0)
+            _choices.Index = CommitChoice;
     }
 
-    private void Undo()
+    private void CancelFocus()
     {
-        if (_queue.Count == 0)
-            return;
+        while (_queue.Count > 0)
+            RefundLast();
+        RefreshSlotButtons();
+        Engine.TimeScale = 1;
+        _phase = Phase.Realtime;
+        SetFocusUi(false);
+        Note("回到蓄力。这一轮还没结算。");
+        RefreshHud();
+    }
+
+    private void RefundLast()
+    {
         var last = _queue[^1];
         _queue.RemoveAt(_queue.Count - 1);
         if (last.Kind is Act.Attack or Act.Skill)
@@ -490,12 +636,10 @@ public sealed partial class CombatView : Control
         if (last.Kind == Act.Swap)
             _run.ActiveSlot = last.Slot;
         RefreshSlotButtons();
-        if (last.Kind == Act.Skill)
-        {
-            _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
-            _run.SkillCooldown = 0;
-        }
-        Note(_queue.Count == 0 ? "队列空了。" : string.Join(" → ", _queue.Select(item => item.Text)));
+        if (last.Kind != Act.Skill)
+            return;
+        _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
+        _run.SkillCooldown = 0;
     }
 
     private void Commit()
@@ -512,6 +656,11 @@ public sealed partial class CombatView : Control
         Engine.TimeScale = 1;
         _charge = 0;
         SetFocusUi(false);
+        if (RoomCleared())
+        {
+            _phase = Phase.Realtime;
+            return;
+        }
         if (extraPause)
         {
             _phase = Phase.Grace;
@@ -551,7 +700,6 @@ public sealed partial class CombatView : Control
         CombatMath.ApplyStrike(ref shield, ref hp, damage);
         foe.Shield = shield;
         foe.Hp = hp;
-        _playerFlash = true;
         if (weapon != null && weapon.PoisonSeconds > 0f)
             foe.PoisonLeft = weapon.PoisonSeconds;
         if (weapon != null && weapon.FreezeSeconds > 0f)
@@ -559,6 +707,7 @@ public sealed partial class CombatView : Control
         var knock = "";
         if (weapon != null && weapon.KnockbackStacks > 0)
             knock = ApplyKnockback(foe, weapon.KnockbackStacks);
+        PresentFoeHit(foe, damage, new Color("ffe08a"), heavy: true);
         Note($"砍中 {foe.Spec.Name}，伤害 {damage}。{knock}");
     }
 
@@ -572,7 +721,10 @@ public sealed partial class CombatView : Control
         foe.Pos = new Vector2(next.X, next.Y);
         var text = hitWall ? "撞墙受伤。" : "";
         if (hitWall)
+        {
             foe.Hp -= CombatMath.CollisionDamage;
+            PresentFoeHit(foe, CombatMath.CollisionDamage, new Color("f0d78c"), heavy: false);
+        }
         foreach (var other in _foes)
         {
             if (other == foe || !other.Alive)
@@ -581,6 +733,8 @@ public sealed partial class CombatView : Control
             {
                 foe.Hp -= CombatMath.CollisionDamage;
                 other.Hp -= CombatMath.CollisionDamage;
+                PresentFoeHit(foe, CombatMath.CollisionDamage, new Color("f0d78c"), heavy: false);
+                PresentFoeHit(other, CombatMath.CollisionDamage, new Color("f0d78c"), heavy: false);
                 text += "撞上另一个敌人，双方受伤。";
             }
         }
@@ -783,8 +937,10 @@ public sealed partial class CombatView : Control
             {
                 foe.PoisonTick -= 1f;
                 var hp = foe.Hp;
-                CombatMath.ApplyPoisonTick(foe.Spec.MaxHp, ref foe.PoisonFrac, ref hp);
+                var dealt = CombatMath.ApplyPoisonTick(foe.Spec.MaxHp, ref foe.PoisonFrac, ref hp);
                 foe.Hp = hp;
+                if (dealt > 0)
+                    PresentFoeHit(foe, dealt, new Color("9be39b"), heavy: false);
             }
         }
     }
@@ -816,6 +972,9 @@ public sealed partial class CombatView : Control
         _run.Shield = shield;
         _run.Hp = hp;
         _iframe = 0.4f;
+        _hurtFlash = CombatFeel.HitFlashSeconds;
+        _shake = MathF.Max(_shake, 7f);
+        SpawnPop(_player, amount.ToString(), new Color("ff8b8b"));
     }
 
     private Vector2 ClampFoe(Vector2 pos)
@@ -827,15 +986,342 @@ public sealed partial class CombatView : Control
 
     private void RefreshHud()
     {
-        var phase = _phase switch
-        {
-            Phase.Focus => "时停",
-            Phase.Grace => $"提前移动 {_grace:0.0}s",
-            _ => _charge >= 1f ? "按空格时停" : "蓄力中",
-        };
+        var phase = _clear.Running
+            ? "房间清空"
+            : _hitStop > 0f
+                ? "命中"
+                : _phase switch
+                {
+                    Phase.Focus => "时停",
+                    Phase.Grace => $"提前移动 {_grace:0.0}s",
+                    _ => _charge >= 1f ? "按 空格、J 或回车时停" : "蓄力中",
+                };
         _hud.Text =
             $"{phase}\n生命 {_run.Hp}/{_run.MaxHp}  魔力 {_run.Mana}/{_run.MaxMana}  护盾 {_run.Shield}\n" +
             $"力量 {_run.Attack}  防御 {_run.Defense}  行动点 {_ap}  冷却 {_run.SkillCooldown:0.0} 秒\n手持 {_run.ActiveWeapon?.Name}";
+    }
+
+    private void TickJuice(float dt)
+    {
+        _shake = MathF.Max(0f, _shake - dt * 28f);
+        _hurtFlash = MathF.Max(0f, _hurtFlash - dt);
+        _swing = MathF.Max(0f, _swing - dt);
+        foreach (var foe in _foes)
+        {
+            foe.HitFlash = MathF.Max(0f, foe.HitFlash - dt);
+            foe.HitPunch = MathF.Max(0f, foe.HitPunch - dt);
+            if (foe.DeathLeft > 0f)
+                foe.DeathLeft = MathF.Max(0f, foe.DeathLeft - dt);
+        }
+        for (var i = _pops.Count - 1; i >= 0; i--)
+        {
+            _pops[i].Age += dt;
+            if (_pops[i].Age >= CombatFeel.NumberSeconds)
+                _pops.RemoveAt(i);
+        }
+    }
+
+    private bool RoomCleared() => _foes.Count > 0 && _foes.All(foe => !foe.Alive);
+
+    private void BeginClear()
+    {
+        if (_clear.Running || _clear.Done)
+            return;
+        _hitStop = 0f;
+        Engine.TimeScale = 1;
+        _clear.NotifyLiving(0);
+        Note("房间清空。出口已经打开。");
+    }
+
+    private void FinishClear()
+    {
+        var gold = Loot.GoldFor(_foes.Count);
+        _run.Gold += gold;
+        var extra = "";
+        if (Loot.RollsMana(_rng))
+        {
+            _run.Mana = Math.Min(_run.MaxMana, _run.Mana + Loot.ManaFromLoot);
+            extra = $" 蓝 +{Loot.ManaFromLoot}。";
+        }
+        End(true, $"房间清空。获得 {gold} 金币。{extra}");
+    }
+
+    private void PresentFoeHit(Foe foe, int amount, Color color, bool heavy)
+    {
+        foe.HitFlash = MathF.Max(foe.HitFlash, heavy ? CombatFeel.HitFlashSeconds : CombatFeel.HitFlashSeconds * 0.45f);
+        if (heavy)
+            foe.HitPunch = MathF.Max(foe.HitPunch, CombatFeel.HitPunchSeconds);
+        if (amount > 0)
+            SpawnPop(foe.Pos, amount.ToString(), color);
+        if (foe.Hp <= 0 && !foe.DeathPlayed)
+        {
+            foe.DeathPlayed = true;
+            foe.DeathLeft = CombatFeel.DeathSeconds;
+            foe.HitFlash = CombatFeel.HitFlashSeconds;
+            foe.HitPunch = CombatFeel.HitPunchSeconds;
+        }
+        if (heavy)
+            _swing = CombatFeel.HitPunchSeconds;
+        if (foe.Hp <= 0 && RoomCleared())
+        {
+            _hitStop = 0f;
+            _shake = MathF.Max(_shake, 8f);
+            return;
+        }
+        if (!heavy)
+            return;
+        _shake = MathF.Max(_shake, 5f);
+        _hitStop = MathF.Max(_hitStop, CombatFeel.HitStopSeconds);
+    }
+
+    private void SpawnPop(Vector2 pos, string text, Color color)
+    {
+        var lift = 0;
+        foreach (var pop in _pops)
+        {
+            if (pop.Pos.DistanceTo(pos) < 80f)
+                lift++;
+        }
+        _pops.Add(new Pop
+        {
+            Pos = pos + new Vector2(-12f, -30f - lift * 16f),
+            Text = text,
+            Color = color,
+        });
+    }
+
+    private void DrawFoe(Foe foe, bool selected)
+    {
+        var dying = !foe.Alive;
+        if (dying && foe.DeathLeft <= 0f && foe.DeathPlayed)
+            return;
+        var life = dying ? Unit(foe.DeathLeft, CombatFeel.DeathSeconds) : 1f;
+        var punch = Unit(foe.HitPunch, CombatFeel.HitPunchSeconds);
+        var scale = (1f + punch * 0.28f) * (dying ? Mathf.Lerp(0.16f, 1.14f, life) : 1f);
+        var flash = Unit(foe.HitFlash, CombatFeel.HitFlashSeconds);
+        var alpha = dying ? life : 1f;
+        var face = _player - foe.Pos;
+        var winding = foe.Alive && foe.Windup > 0f;
+        var boss = foe.Spec.MaxHp > 80;
+        var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+        if (boss)
+            Look.Boss(this, foe.Pos, face, winding, scale, flash, alpha);
+        else if (dasher)
+            Look.Dasher(this, foe.Pos, face, winding, scale, flash, alpha);
+        else
+            Look.Shooter(this, foe.Pos, face, winding, scale, flash, alpha);
+        if (flash > 0.55f)
+        {
+            var r = 16f + punch * 10f;
+            var ink = new Color(1f, 0.96f, 0.82f, flash * alpha);
+            DrawLine(foe.Pos + new Vector2(-r, 0f), foe.Pos + new Vector2(r, 0f), ink, 2f);
+            DrawLine(foe.Pos + new Vector2(0f, -r), foe.Pos + new Vector2(0f, r), ink, 2f);
+        }
+        if (!foe.Alive)
+            return;
+        if (selected)
+        {
+            var span = Look.FoeSpan(boss, dasher);
+            DrawRect(new Rect2(foe.Pos.X - span * 0.45f, foe.Pos.Y - span * 0.55f, span * 0.9f, span), new Color("f2d48a"), false, 3f);
+        }
+        var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
+        DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
+        if (selected && ShowingStrikePreview())
+            DrawStrikePreview(foe, boss, dasher);
+    }
+
+    private void DrawPops()
+    {
+        foreach (var pop in _pops)
+        {
+            var fade = 1f - Mathf.Clamp(pop.Age / CombatFeel.NumberSeconds, 0f, 1f);
+            var pos = pop.Pos + new Vector2(0f, -pop.Age * 46f);
+            var shadow = new Color(0.08f, 0.05f, 0.04f, fade);
+            var ink = new Color(pop.Color.R, pop.Color.G, pop.Color.B, fade);
+            DrawString(UiKit.Font, pos + new Vector2(1f, 1f), pop.Text, fontSize: 20, modulate: shadow);
+            DrawString(UiKit.Font, pos, pop.Text, fontSize: 20, modulate: ink);
+        }
+    }
+
+    private void DrawClearBanner()
+    {
+        var banner = new Rect2(_arena.GetCenter().X - 160f, _arena.GetCenter().Y - 48f, 320f, 96f);
+        DrawRect(banner, new Color(0.07f, 0.05f, 0.04f, 0.82f));
+        DrawRect(banner, new Color("e6c27a"), false, 3f);
+        DrawString(UiKit.Font, banner.Position + new Vector2(0f, 42f), "房间清空", HorizontalAlignment.Center, banner.Size.X, 36, new Color("f6e7b2"));
+        DrawString(UiKit.Font, banner.Position + new Vector2(0f, 74f), "出口已经打开", HorizontalAlignment.Center, banner.Size.X, 18, new Color("f3efe4"));
+    }
+
+    private Vector2 ShakeOffset()
+    {
+        if (_shake < 0.35f)
+            return Vector2.Zero;
+        var t = (float)Time.GetTicksMsec() * 0.041f;
+        return new Vector2(MathF.Sin(t), MathF.Cos(t * 0.83f)) * _shake;
+    }
+
+    private static float Unit(float left, float span) => span <= 0f ? 0f : Mathf.Clamp(left / span, 0f, 1f);
+
+    private float RealSlice()
+    {
+        var now = Time.GetTicksMsec();
+        if (_realClock == 0)
+        {
+            _realClock = now;
+            return 0f;
+        }
+        var step = MathF.Min(0.05f, (now - _realClock) / 1000f);
+        _realClock = now;
+        return step;
+    }
+
+    private static bool IsSword(WeaponState? weapon) =>
+        weapon != null && (weapon.IsOrdinarySword || weapon.Name.Contains('剑'));
+
+    private void BeginPortrait(int index)
+    {
+        _portraitFoe = index;
+        _portraitSword = IsSword(_run.ActiveWeapon);
+        _portraitLeft = PortraitSeconds;
+        _actions.Visible = false;
+        if (_slots != null)
+            _slots.Visible = false;
+        if (_itemBar != null)
+        {
+            _itemsOpen = false;
+            _itemBar.Visible = false;
+        }
+        QueueRedraw();
+    }
+
+    private void TickPortrait(float realDt)
+    {
+        if (_portraitLeft <= 0f)
+            return;
+        _portraitLeft = MathF.Max(0f, _portraitLeft - realDt);
+        if (_portraitLeft > 0f)
+            return;
+        _portraitFoe = -1;
+        if (_phase != Phase.Focus)
+            return;
+        _actions.Visible = true;
+        if (_slots != null)
+            _slots.Visible = true;
+    }
+
+    private void DrawPortrait()
+    {
+        if (_portraitLeft <= 0f || _portraitFoe < 0 || _portraitFoe >= _foes.Count)
+            return;
+        var foe = _foes[_portraitFoe];
+        var t = 1f - Mathf.Clamp(_portraitLeft / PortraitSeconds, 0f, 1f);
+        var size = Size.X < 32f ? GetViewportRect().Size : Size;
+        var intro = Mathf.Clamp(t / 0.16f, 0f, 1f);
+        var pop = Mathf.Lerp(0.74f, 1f, intro);
+        var hit = Mathf.Clamp((t - 0.14f) / 0.16f, 0f, 1f) * Mathf.Clamp((0.9f - t) / 0.34f, 0f, 1f);
+        var tremble = new Vector2(MathF.Sin(t * 72f) * 18f, MathF.Cos(t * 57f) * 8f) * hit;
+        DrawRect(new Rect2(Vector2.Zero, size), new Color(0.05f, 0.04f, 0.06f, 0.94f));
+        var left = new Vector2(size.X * 0.25f, size.Y * 0.58f);
+        var right = new Vector2(size.X * 0.75f, size.Y * 0.56f) + tremble;
+        Look.Person(this, left, Vector2.Right, CutInScale(Art.Player, size.Y) * pop);
+        DrawPortraitFoe(foe, right, CutInScale(PortraitTex(foe), size.Y) * pop * (1f + hit * 0.05f), hit);
+        if (_portraitSword)
+            DrawSwordTrail(size, t);
+        DrawString(UiKit.Font, new Vector2(size.X * 0.08f, 72f), "你", fontSize: 28, modulate: new Color("f7f3ea"));
+        DrawString(UiKit.Font, new Vector2(size.X * 0.58f, 72f), foe.Spec.Name, fontSize: 28, modulate: new Color("f7f3ea"));
+    }
+
+    private static Texture2D PortraitTex(Foe foe)
+    {
+        if (foe.Spec.MaxHp > 80)
+            return Art.Boss;
+        if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            return Art.Dasher;
+        return Art.Shooter;
+    }
+
+    private static float CutInScale(Texture2D tex, float viewH)
+    {
+        var baseH = MathF.Max(1f, tex.GetHeight() * Look.ActorScale);
+        return Mathf.Clamp(viewH * 0.62f / baseH, 2.8f, 9f);
+    }
+
+    private void DrawPortraitFoe(Foe foe, Vector2 pos, float scale, float flash)
+    {
+        var face = Vector2.Left;
+        var boss = foe.Spec.MaxHp > 80;
+        var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+        if (boss)
+            Look.Boss(this, pos, face, false, scale, flash);
+        else if (dasher)
+            Look.Dasher(this, pos, face, false, scale, flash);
+        else
+            Look.Shooter(this, pos, face, false, scale, flash);
+    }
+
+    private void DrawSwordTrail(Vector2 size, float t)
+    {
+        var travel = Mathf.Clamp((t - 0.06f) / 0.34f, 0f, 1f);
+        if (travel <= 0.001f)
+            return;
+        var head = 1f - MathF.Pow(1f - travel, 1.65f);
+        var dissolve = Mathf.Clamp((t - 0.42f) / 0.2f, 0f, 1f);
+        var fade = 1f - dissolve;
+        var tailLead = dissolve * 0.42f;
+        DrawSlashRibbon(size, head - 0.14f, 0.36f, tailLead, fade * 0.22f, 0.72f, core: false);
+        DrawSlashRibbon(size, head - 0.07f, 0.38f, tailLead, fade * 0.48f, 0.86f, core: false);
+        DrawSlashRibbon(size, head, 0.4f, tailLead, fade, 1f, core: true);
+    }
+
+    private void DrawSlashRibbon(Vector2 size, float head, float length, float tailLead, float alpha, float widthMul, bool core)
+    {
+        if (alpha <= 0.02f)
+            return;
+        var tail = head - length + tailLead;
+        var from = MathF.Max(0f, tail);
+        var to = MathF.Min(1f, head);
+        if (to - from < 0.02f)
+            return;
+        const int steps = 14;
+        var count = steps + 1;
+        var pts = new Vector2[count * 2];
+        var cols = new Color[count * 2];
+        var spine = core ? new Vector2[count] : null;
+        var span = MathF.Max(0.001f, head - tail);
+        for (var i = 0; i < count; i++)
+        {
+            var local = i / (float)steps;
+            var u = Mathf.Lerp(from, to, local);
+            var along = Mathf.Clamp((u - tail) / span, 0f, 1f);
+            SlashSample(size, u, out var pos, out var normal);
+            var width = MathF.Sin(along * MathF.PI) * size.Y * 0.05f * widthMul;
+            pts[i] = pos + normal * width;
+            pts[count * 2 - 1 - i] = pos - normal * width;
+            var ink = alpha * Mathf.Lerp(0.04f, 1f, along);
+            cols[i] = new Color(1f, 1f, 1f, ink);
+            cols[count * 2 - 1 - i] = new Color(1f, 1f, 1f, ink * 0.75f);
+            if (spine != null)
+                spine[i] = pos;
+        }
+        DrawPolygon(pts, cols);
+        if (spine == null)
+            return;
+        DrawPolyline(spine, new Color(1f, 1f, 1f, alpha), MathF.Max(2f, size.Y * 0.008f), true);
+    }
+
+    private static void SlashSample(Vector2 size, float u, out Vector2 pos, out Vector2 normal)
+    {
+        var a = new Vector2(size.X * 0.30f, size.Y * 0.14f);
+        var b = new Vector2(size.X * 0.68f, size.Y * 0.20f);
+        var c = new Vector2(size.X * 0.74f, size.Y * 0.84f);
+        var ab = a.Lerp(b, u);
+        var bc = b.Lerp(c, u);
+        pos = ab.Lerp(bc, u);
+        var tangent = (b - a) * (1f - u) + (c - b) * u;
+        if (tangent.LengthSquared() < 0.001f)
+            tangent = Vector2.Down;
+        tangent = tangent.Normalized();
+        normal = new Vector2(-tangent.Y, tangent.X);
     }
 
     private void Note(string text)

@@ -20,6 +20,9 @@ public sealed partial class ExploreView : Control
     private Vector2 _face = Vector2.Down;
     private Dir? _atDoor;
     private Rect2 _room;
+    private bool _exitsLit;
+    private int _doorPick = 1;
+    public bool AcceptKeys { get; set; } = true;
 
     public ExploreView(RunState run, FloorMap map, int x, int y, Action<Dir> enter, Action<Dir> peek)
     {
@@ -54,7 +57,7 @@ public sealed partial class ExploreView : Control
         _stats = UiKit.Label("");
         top.AddChild(_stats);
 
-        _prompt = UiKit.Label("走到发亮的门口，再点窥视或进入。");
+        _prompt = UiKit.Label("走到门口。[1] 窥视，[J] 进入。Tab 切换当前项。");
         top.AddChild(_prompt);
 
         var row = new HBoxContainer();
@@ -71,7 +74,7 @@ public sealed partial class ExploreView : Control
         _enterButton.FocusMode = FocusModeEnum.None;
         row.AddChild(_enterButton);
 
-        _log = UiKit.Label("你在出生的房间里。方向键或 WASD 走动。小地图在右下角，不能点。");
+        _log = UiKit.Label("你在出生的房间里。WASD 或方向键走动。小地图在右下角，不能点。");
         top.AddChild(_log);
 
         _player = new Vector2(640, 360);
@@ -81,24 +84,58 @@ public sealed partial class ExploreView : Control
     public override void _Process(double delta)
     {
         FitRoom();
-        var input = Vector2.Zero;
-        if (Input.IsKeyPressed(Key.A) || Input.IsKeyPressed(Key.Left)) input.X -= 1;
-        if (Input.IsKeyPressed(Key.D) || Input.IsKeyPressed(Key.Right)) input.X += 1;
-        if (Input.IsKeyPressed(Key.W) || Input.IsKeyPressed(Key.Up)) input.Y -= 1;
-        if (Input.IsKeyPressed(Key.S) || Input.IsKeyPressed(Key.Down)) input.Y += 1;
-        if (input.LengthSquared() > 0f)
+        if (AcceptKeys && Visible)
         {
-            _face = input.Normalized();
-            _player += _face * _run.MoveSpeed * (float)delta;
+            var input = Vector2.Zero;
+            if (Input.IsKeyPressed(Key.A) || Input.IsKeyPressed(Key.Left)) input.X -= 1;
+            if (Input.IsKeyPressed(Key.D) || Input.IsKeyPressed(Key.Right)) input.X += 1;
+            if (Input.IsKeyPressed(Key.W) || Input.IsKeyPressed(Key.Up)) input.Y -= 1;
+            if (Input.IsKeyPressed(Key.S) || Input.IsKeyPressed(Key.Down)) input.Y += 1;
+            if (input.LengthSquared() > 0f)
+            {
+                _face = input.Normalized();
+                _player += _face * _run.MoveSpeed * (float)delta;
+            }
         }
         ClampPlayer();
         _atDoor = DoorUnderPlayer();
-        var doorName = _atDoor == null ? "先走到门口" : NameOf(_atDoor.Value);
-        _peekButton.Text = _atDoor == null ? "窥视" : $"窥视{doorName}";
-        _enterButton.Text = _atDoor == null ? "进入" : $"进入{doorName}";
-        _peekButton.Disabled = _atDoor == null;
-        _enterButton.Disabled = _atDoor == null;
+        if (_atDoor == null)
+            _doorPick = 1;
+        var doorName = _atDoor == null ? "" : NameOf(_atDoor.Value);
+        var peek = _atDoor == null ? "[1] 窥视" : $"[1] 窥视{doorName}";
+        var enter = _atDoor == null ? "[J] 进入" : $"[J] 进入{doorName}";
+        var atDoor = _atDoor != null;
+        ChoiceList.Paint(_peekButton, peek, atDoor && _doorPick == 0);
+        ChoiceList.Paint(_enterButton, enter, atDoor && _doorPick == 1);
+        _peekButton.Disabled = !atDoor;
+        _enterButton.Disabled = !atDoor;
         QueueRedraw();
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (!AcceptKeys || !Visible || _atDoor == null)
+            return;
+        if (@event is not InputEventKey key)
+            return;
+        var digit = Keys.Digit(key);
+        var tab = Keys.Tab(key);
+        if (digit == 1)
+            OnPeek();
+        else if (digit == 2)
+            OnEnter();
+        else if (tab != 0)
+            _doorPick = _doorPick == 0 ? 1 : 0;
+        else if (Keys.Confirm(key))
+        {
+            if (_doorPick == 0)
+                OnPeek();
+            else
+                OnEnter();
+        }
+        else
+            return;
+        GetViewport().SetInputAsHandled();
     }
 
     public void EnterFrom(int x, int y, Dir from)
@@ -113,8 +150,17 @@ public sealed partial class ExploreView : Control
             Dir.West => new Vector2(_room.End.X - 70, _room.GetCenter().Y),
             _ => new Vector2(_room.Position.X + 70, _room.GetCenter().Y),
         };
+        _exitsLit = false;
+        _doorPick = 1;
+        _prompt.Text = "走到门口。[1] 窥视，[J] 进入。Tab 切换当前项。";
         RefreshHud();
         QueueRedraw();
+    }
+
+    public void CelebrateClear()
+    {
+        _exitsLit = true;
+        _prompt.Text = "房间清空。走到门口，按 [J] 进入。";
     }
 
     public void SetPeek(string text) => _prompt.Text = text;
@@ -154,22 +200,10 @@ public sealed partial class ExploreView : Control
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            if (DoorRect(dir).Grow(18).HasPoint(_player))
+            if (Look.DoorRect(_room, dir).Grow(18).HasPoint(_player))
                 return dir;
         }
         return null;
-    }
-
-    private Rect2 DoorRect(Dir dir)
-    {
-        var center = _room.GetCenter();
-        return dir switch
-        {
-            Dir.North => new Rect2(center.X - 46, _room.Position.Y - 8, 92, 28),
-            Dir.South => new Rect2(center.X - 46, _room.End.Y - 20, 92, 28),
-            Dir.West => new Rect2(_room.Position.X - 8, center.Y - 46, 28, 92),
-            _ => new Rect2(_room.End.X - 20, center.Y - 46, 28, 92),
-        };
     }
 
     public override void _Draw()
@@ -181,7 +215,7 @@ public sealed partial class ExploreView : Control
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            Look.DoorGap(this, DoorRect(dir), _atDoor == dir, _room);
+            Look.DoorGap(this, Look.DoorRect(_room, dir), _exitsLit || _atDoor == dir, _room);
         }
 
         Look.Person(this, _player, _face);

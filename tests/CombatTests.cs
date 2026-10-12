@@ -90,6 +90,52 @@ public class CombatTests
     }
 
     [Fact]
+    public void RoomLoop_HitStaysClosed_LastKillHoldsThenOpensDoors()
+    {
+        Assert.InRange(CombatFeel.ClearHoldSeconds, 0.30f, 0.50f);
+        Assert.InRange(CombatFeel.HitStopSeconds, 0.05f, 0.12f);
+        Assert.True(CombatFeel.HitStopSeconds < CombatFeel.ClearHoldSeconds);
+        Assert.True(CombatFeel.DeathSeconds < CombatFeel.ClearHoldSeconds);
+
+        var beat = new ClearBeat();
+
+        // Enter and fight: someone is still standing, so the exits stay shut.
+        beat.NotifyLiving(2);
+        beat.Tick(2f);
+        Assert.False(beat.DoorsOpen);
+        Assert.False(beat.Running);
+        Assert.False(beat.Done);
+
+        // A hit that is not the last kill does not open the room.
+        beat.NotifyLiving(1);
+        beat.Tick(CombatFeel.HitStopSeconds);
+        Assert.False(beat.DoorsOpen);
+        Assert.False(beat.Done);
+
+        // Last enemy dies: doors open now, but the beat is not finished yet.
+        beat.NotifyLiving(0);
+        Assert.True(beat.Running);
+        Assert.True(beat.DoorsOpen);
+        Assert.False(beat.Done);
+        Assert.InRange(beat.Left, 0.30f, 0.50f);
+
+        beat.Tick(0.20f);
+        Assert.True(beat.Running);
+        Assert.False(beat.Done);
+
+        beat.Tick(0.30f);
+        Assert.True(beat.Done);
+        Assert.False(beat.Running);
+        Assert.True(beat.DoorsOpen);
+
+        // The hold does not start a new wave, and it does not run twice.
+        beat.NotifyLiving(0);
+        beat.Tick(1f);
+        Assert.True(beat.Done);
+        Assert.False(beat.Running);
+    }
+
+    [Fact]
     public void Shop_SoldGoodsStayGoneAfterRefresh()
     {
         var run = RunState.CreateNew();

@@ -12,11 +12,63 @@ public partial class App : Control
     private int _y;
     private ExploreView _explore = null!;
     private Control? _overlay;
+    private readonly ChoiceList _choices = new();
+    private Action? _cancel;
 
     public override void _Ready()
     {
         GetWindow().Title = "洞穴之咒";
         StartRun();
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (_overlay == null || @event is not InputEventKey key)
+            return;
+        if (Keys.Previous(key))
+            _choices.Move(-1);
+        else if (Keys.Next(key))
+            _choices.Move(1);
+        else if (Keys.Tab(key) is var tab && tab != 0)
+            _choices.Move(tab);
+        else if (Keys.Confirm(key))
+            ActivateChoice();
+        else if (Keys.Cancel(key))
+            _cancel?.Invoke();
+        else if (Keys.Digit(key) is int number)
+        {
+            if (!_choices.PressNumber(number) && number <= _choices.Count)
+                _explore.SetLog("现在选不了这个。");
+        }
+        else
+            return;
+        GetViewport().SetInputAsHandled();
+    }
+
+    private void ActivateChoice()
+    {
+        if (_choices.SelectedDisabled)
+        {
+            _explore.SetLog("现在选不了这个。");
+            return;
+        }
+        _choices.Confirm();
+    }
+
+    private void BeginChoices(Action? cancel)
+    {
+        _choices.Clear();
+        _cancel = cancel;
+    }
+
+    private Button AddChoice(Container parent, string label, Action action, bool cancel = false)
+    {
+        var button = UiKit.Button(label, action);
+        parent.AddChild(button);
+        _choices.Add(button, label, action);
+        if (cancel)
+            _cancel = action;
+        return button;
     }
 
     private void StartRun()
@@ -103,37 +155,39 @@ public partial class App : Control
     private void OpenBackpack(FloorCell cell, bool boss)
     {
         CloseOverlay();
-        var box = Modal("开战之前，换好武器。");
+        var box = Modal("开战之前，换好武器。方向键选择，J 确认，Esc 离开。");
+        BeginChoices(CloseOverlay);
         foreach (var weapon in _run.Backpack)
         {
             var captured = weapon;
             var row = new HBoxContainer();
             row.AddChild(UiKit.Label(weapon.Name));
-            row.AddChild(UiKit.Button("放入槽 1", () =>
+            AddChoice(row, $"{weapon.Name} 放入槽 1", () =>
             {
                 _run.Equip(captured, 0);
                 _run.ActiveSlot = 0;
                 _explore.Refresh();
-            }));
-            row.AddChild(UiKit.Button("放入槽 2", () =>
+            });
+            AddChoice(row, $"{weapon.Name} 放入槽 2", () =>
             {
                 _run.Equip(captured, 1);
                 _run.ActiveSlot = 1;
                 _explore.Refresh();
-            }));
+            });
             box.AddChild(row);
         }
-        box.AddChild(UiKit.Button(boss ? "迎战小 Boss" : "开始战斗", () =>
+        AddChoice(box, boss ? "迎战小 Boss" : "开始战斗", () =>
         {
             CloseOverlay();
             StartCombat(cell, boss);
-        }));
-        box.AddChild(UiKit.Button("先离开", CloseOverlay));
+        });
+        AddChoice(box, "先离开", CloseOverlay, cancel: true);
     }
 
     private void StartCombat(FloorCell cell, bool boss)
     {
         _explore.Visible = false;
+        _explore.AcceptKeys = false;
         CombatView? combat = null;
         var specs = new List<EnemySpec>();
         if (boss)
@@ -144,11 +198,18 @@ public partial class App : Control
             specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
             specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
         }
+        var exits = new List<Dir>();
+        foreach (var dir in new[] { Dir.North, Dir.East, Dir.South, Dir.West })
+        {
+            if (_map.Step(_x, _y, dir) != null)
+                exits.Add(dir);
+        }
         combat = new CombatView(_run, specs, _rng, (won, message) =>
         {
             Engine.TimeScale = 1;
             combat!.QueueFree();
             _explore.Visible = true;
+            _explore.AcceptKeys = true;
             if (!won)
             {
                 _run.Dead = true;
@@ -158,19 +219,20 @@ public partial class App : Control
             cell.CombatCleared = true;
             _explore.Refresh();
             _explore.SetLog(message);
+            _explore.CelebrateClear();
             if (boss)
             {
                 _run.Won = true;
                 ShowEnd("通关", "守门的小 Boss 倒下了。这一版到此结束。");
             }
-        });
+        }, exits);
         AddChild(combat);
     }
 
     private void OpenShop(FloorCell cell)
     {
         CloseOverlay();
-        var box = Modal("商店。买过的货不会回来。没买的还在，可以花钱刷新。");
+        var box = Modal("商店。方向键选择，数字键直接买，J 确认，Esc 离开。");
         void Fill()
         {
             foreach (var child in box.GetChildren())
@@ -178,6 +240,7 @@ public partial class App : Control
                 if (child is not Label { Text: not null } label || !label.Text.StartsWith("商店"))
                     child.QueueFree();
             }
+            BeginChoices(CloseOverlay);
             foreach (var offer in cell.Shop)
             {
                 var captured = offer;
@@ -186,7 +249,7 @@ public partial class App : Control
                 row.AddChild(UiKit.Label($"{offer.Name}  {offer.Detail}  {state}"));
                 if (!offer.Sold)
                 {
-                    row.AddChild(UiKit.Button("购买", () =>
+                    AddChoice(row, $"购买 {offer.Name}", () =>
                     {
                         if (ShopCatalog.TryBuy(_run, cell, captured.Id, out var note))
                         {
@@ -197,11 +260,11 @@ public partial class App : Control
                         }
                         else
                             _explore.SetLog(note);
-                    }));
+                    });
                 }
                 box.AddChild(row);
             }
-            box.AddChild(UiKit.Button($"刷新（{FloorMap.RefreshCost} 金）", () =>
+            AddChoice(box, $"刷新（{FloorMap.RefreshCost} 金）", () =>
             {
                 if (_run.Gold < FloorMap.RefreshCost)
                 {
@@ -218,8 +281,8 @@ public partial class App : Control
                 _explore.Refresh();
                 CloseOverlay();
                 OpenShop(cell);
-            }));
-            box.AddChild(UiKit.Button("离开", CloseOverlay));
+            });
+            AddChoice(box, "离开", CloseOverlay, cancel: true);
         }
         Fill();
     }
@@ -228,11 +291,16 @@ public partial class App : Control
     {
         CloseOverlay();
         var mazeEvent = EventTable.For(cell);
-        var box = Modal($"{mazeEvent.Title}\n\n{mazeEvent.Body}");
+        var canLeave = mazeEvent.Choices.Any(choice => choice.Label == "离开");
+        var hint = canLeave
+            ? "方向键或数字键选择，J 确认，Esc 离开。"
+            : "方向键或数字键选择，J 确认。这一屏没有「离开」，要选一项。";
+        var box = Modal($"{mazeEvent.Title}\n\n{mazeEvent.Body}\n\n{hint}");
+        BeginChoices(null);
         foreach (var choice in mazeEvent.Choices)
         {
             var captured = choice;
-            box.AddChild(UiKit.Button(captured.Label, () =>
+            AddChoice(box, captured.Label, () =>
             {
                 var result = captured.Apply(_run, _rng);
                 if (result.Contains("箱子没有开"))
@@ -244,20 +312,22 @@ public partial class App : Control
                 _explore.Refresh();
                 CloseOverlay();
                 var done = Modal($"{mazeEvent.Title}\n\n{result}");
-                done.AddChild(UiKit.Button("离开", () =>
+                BeginChoices(null);
+                AddChoice(done, "离开", () =>
                 {
                     _explore.SetLog(result);
                     CloseOverlay();
-                }));
-            }));
+                }, cancel: true);
+            }, cancel: captured.Label == "离开");
         }
     }
 
     private void ShowEnd(string title, string body)
     {
         CloseOverlay();
-        var box = Modal($"{title}\n{body}");
-        box.AddChild(UiKit.Button("再来一局", StartRun));
+        var box = Modal($"{title}\n{body}\n\n按 J 或 Esc 再来一局。");
+        BeginChoices(StartRun);
+        AddChoice(box, "再来一局", StartRun, cancel: true);
     }
 
     private VBoxContainer Modal(string text)
@@ -267,6 +337,8 @@ public partial class App : Control
         dim.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         AddChild(dim);
         _overlay = dim;
+        if (IsInstanceValid(_explore))
+            _explore.AcceptKeys = false;
         var box = new VBoxContainer
         {
             Position = new Vector2(280, 140),
@@ -293,6 +365,10 @@ public partial class App : Control
     {
         _overlay?.QueueFree();
         _overlay = null;
+        _choices.Clear();
+        _cancel = null;
+        if (IsInstanceValid(_explore) && _explore.Visible)
+            _explore.AcceptKeys = true;
     }
 
     private static string NameOf(Dir dir) => dir switch
