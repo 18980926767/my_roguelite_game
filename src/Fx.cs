@@ -88,7 +88,7 @@ public sealed partial class FxHost : Node2D
         TextureFilter = TextureFilterEnum.Nearest;
     }
 
-    public void Hit(Vector2 at, Vector2 direction, Random rng)
+    public void Hit(Vector2 at, Vector2 direction, Random rng, int amount = -1)
     {
         if (direction.LengthSquared() < 0.0001f)
             direction = Vector2.Right;
@@ -96,7 +96,7 @@ public sealed partial class FxHost : Node2D
         var burst = new CpuParticles2D
         {
             Position = new Vector2(Mathf.Round(at.X), Mathf.Round(at.Y)),
-            Amount = HitBurst.Count(rng),
+            Amount = amount > 0 ? amount : HitBurst.Count(rng),
             Lifetime = HitBurst.LifeMax,
             LifetimeRandomness = HitBurst.LifeRandomness,
             OneShot = true,

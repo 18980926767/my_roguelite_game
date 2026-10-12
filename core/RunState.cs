@@ -8,6 +8,7 @@ public sealed class WeaponState
     public int KnockbackStacks { get; set; }
     public float PoisonSeconds { get; set; }
     public float FreezeSeconds { get; set; }
+    public int Stain { get; set; }
     public bool IsOrdinarySword { get; init; }
 
     public WeaponState Clone() => new()
@@ -18,6 +19,7 @@ public sealed class WeaponState
         KnockbackStacks = KnockbackStacks,
         PoisonSeconds = PoisonSeconds,
         FreezeSeconds = FreezeSeconds,
+        Stain = Stain,
         IsOrdinarySword = IsOrdinarySword,
     };
 }

@@ -219,6 +219,8 @@ public sealed partial class ExploreView : Control
         }
 
         Look.Person(this, _player, _face);
+        if (_run.ActiveWeapon is { IsOrdinarySword: true } sword)
+            Look.Sword(this, _player, _face, SwordImbue.Tier(sword.Stain));
         DrawMinimap();
     }
 
@@ -265,7 +267,13 @@ public sealed partial class ExploreView : Control
             $"洞穴之咒    {FloorMap.KindLabel(room.Kind)}\n" +
             $"生命 {_run.Hp}/{_run.MaxHp}    魔力 {_run.Mana}/{_run.MaxMana}    护盾 {_run.Shield}\n" +
             $"力量 {_run.Attack}    防御 {_run.Defense}    速度 {(int)(_run.MoveSpeed / RunState.MoveSpeedPerPoint)}    金币 {_run.Gold}\n" +
-            $"手持 {(weapon == null ? "空" : weapon.Name)}";
+            $"手持 {(weapon == null ? "空" : weapon.Name)}{SwordHud()}";
+    }
+
+    private string SwordHud()
+    {
+        var sword = _run.Backpack.FirstOrDefault(item => item.IsOrdinarySword);
+        return sword == null ? "" : $"    普通剑 {SwordImbue.HudLine(sword.Stain)}";
     }
 
     private static string NameOf(Dir dir) => dir switch

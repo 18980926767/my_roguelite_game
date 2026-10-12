@@ -197,6 +197,101 @@ def door(seed: int) -> list[float]:
     return crush(out, 5)
 
 
+def triad(notes: tuple[str, ...], seconds: float) -> list[float]:
+    """Square-wave chord. Notes stay in tune; the envelope only keeps the edges from clicking."""
+    count = max(1, int(SR * seconds))
+    mixed = [0.0] * count
+    gain = 1.0 / len(notes)
+    for name in notes:
+        tone = square(note_hz(name), seconds, duty=0.5)
+        shaped = envelope(tone, 0.012, max(0.0, seconds - 0.05), 0.038)
+        for index, sample in enumerate(shaped):
+            if index < count:
+                mixed[index] += sample * gain
+    return crush(mixed, 6)
+
+
+def ascend(seed: int) -> list[float]:
+    """D minor (D, F, A) for 0.4 s, then D major (D, F#, A) for 0.4 s.
+
+    Variants are the same sting. Pitch is locked at playback so the chord stays in D.
+    """
+    del seed
+    return concat([
+        triad(("D4", "F4", "A4"), 0.4),
+        triad(("D4", "F#4", "A4"), 0.4),
+    ])
+
+
+def muffled_whoosh(seed: int) -> list[float]:
+    """Short dull 'ee' of air. Variants only change length and how closed the noise is."""
+    rng = random.Random(seed)
+    seconds = 0.08 + (seed % 3) * 0.02
+    body = lowpass(noise(seconds, rng), 600 + (seed % 3) * 150)
+    body = envelope(body, 0.004, 0.01, max(0.02, seconds * 0.55))
+    whoosh = square(160 + seed * 14, seconds, slide=-0.7, duty=0.25)
+    whoosh = scale(decay(whoosh, 0.035), 0.2)
+    return [a * 0.78 + b for a, b in zip(body, whoosh)]
+
+
+def swing_tier1(seed: int) -> list[float]:
+    return crush(scale(muffled_whoosh(seed), 0.62), 5)
+
+
+def swing_tier2(seed: int) -> list[float]:
+    body = muffled_whoosh(seed)
+    metal_hz = (1800.0, 2100.0, 2400.0)[seed % 3]
+    metal = square(metal_hz, 0.045, slide=-0.18, duty=0.25)
+    metal = scale(envelope(metal, 0.002, 0.01, 0.028), 0.34)
+    out = body[:]
+    mix_into(out, metal)
+    return crush(scale(out, 0.62), 5)
+
+
+def echo(samples: list[float], delay_s: float, gain: float) -> list[float]:
+    delay_n = max(1, int(SR * delay_s))
+    out = samples[:] + [0.0] * delay_n
+    for index, sample in enumerate(samples):
+        out[index + delay_n] += sample * gain
+    return out
+
+
+def swing_tier3(seed: int) -> list[float]:
+    """Tier-2 whoosh, a short rising A-C-E, then a light slap-back."""
+    body = muffled_whoosh(seed)
+    metal_hz = (1800.0, 2100.0, 2400.0)[seed % 3]
+    metal = square(metal_hz, 0.045, slide=-0.18, duty=0.25)
+    metal = scale(envelope(metal, 0.002, 0.01, 0.028), 0.3)
+    out = body[:]
+    mix_into(out, metal)
+    note_s = 0.045 + (seed % 3) * 0.003
+    arp: list[float] = []
+    for name in ("A5", "C6", "E6"):
+        tone = square(note_hz(name), note_s, duty=0.5)
+        arp.extend(scale(envelope(tone, 0.002, note_s * 0.4, note_s * 0.45), 0.24))
+    if len(out) < len(arp):
+        out.extend([0.0] * (len(arp) - len(out)))
+    mix_into(out, arp)
+    delay_s = 0.030 + (seed % 3) * 0.005
+    gain = 0.22 + (seed % 3) * 0.03
+    return crush(scale(echo(out, delay_s, gain), 0.55), 5)
+
+
+def hitheavy(seed: int) -> list[float]:
+    """Denser, lower hit plus a very short sub thump. Playback adds the extra loudness."""
+    rng = random.Random(80 + seed)
+    seconds = 0.09
+    tone = square((196.0, 220.0, 246.0)[seed % 3], seconds, slide=-0.72, duty=0.5)
+    tone = decay(tone, 0.04)
+    click = decay(noise(seconds, rng), 0.012)
+    sub = lowpass(decay(square(70.0, 0.05, slide=-0.45, duty=0.5), 0.016), 140)
+    out = [0.0] * int(SR * seconds)
+    mix_into(out, scale(tone, 0.82))
+    mix_into(out, scale(click, 0.4))
+    mix_into(out, scale(sub, 0.95))
+    return crush(scale(out, 0.95), 5)
+
+
 def pickup(seed: int) -> list[float]:
     pair = ((880, 1174), (988, 1318), (784, 1046))[seed % 3]
     parts: list[list[float]] = []
@@ -216,6 +311,11 @@ CUES = {
     "clear": clear,
     "door": door,
     "pickup": pickup,
+    "ascend": ascend,
+    "swing1": swing_tier1,
+    "swing2": swing_tier2,
+    "swing3": swing_tier3,
+    "hitheavy": hitheavy,
 }
 
 

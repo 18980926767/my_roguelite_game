@@ -217,6 +217,19 @@ public class JuiceTests
         Assert.InRange(sweep.Seconds, 0.29f, 0.31f);
         Assert.True(sweep.Peak > 1000);
         Assert.True(File.Exists(Path.Combine(root, "tools", "gen_audio.py")));
+
+        var ascends = Directory.GetFiles(Path.Combine(root, "audio", "sfx"), "ascend-*.wav");
+        Assert.InRange(ascends.Length, CueBank.MinVariants, CueBank.MaxVariants);
+        Assert.All(ascends, file => Assert.InRange(WavFile.Read(file).Seconds, 0.78f, 0.82f));
+        Assert.True(CueBank.LocksPitch(SfxCue.Ascend));
+        Assert.False(CueBank.LocksPitch(SfxCue.Clear));
+
+        var swing1 = Directory.GetFiles(Path.Combine(root, "audio", "sfx"), "swing1-*.wav");
+        Assert.All(swing1, file => Assert.InRange(WavFile.Read(file).Seconds, 0.07, 0.13));
+        var swing3 = Directory.GetFiles(Path.Combine(root, "audio", "sfx"), "swing3-*.wav");
+        Assert.All(swing3, file => Assert.True(WavFile.Read(file).Seconds > 0.16f));
+        var heavy = Directory.GetFiles(Path.Combine(root, "audio", "sfx"), "hitheavy-*.wav");
+        Assert.All(heavy, file => Assert.InRange(WavFile.Read(file).Seconds, 0.05, 0.16));
     }
 
     private static float Luma(Rgb color) =>

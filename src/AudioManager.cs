@@ -10,7 +10,9 @@ public partial class AudioManager : Node
 
     private readonly MusicMix _mix = new();
     private readonly VolumeKnob _volume = new();
+    private readonly FocusFilter _focus = new();
     private readonly Random _rng = new();
+    private AudioEffectLowPassFilter? _lowpass;
     private readonly Dictionary<SfxCue, List<AudioStreamWav>> _cues = new();
     private readonly List<AudioStreamPlayer> _pool = new();
     private AudioStreamPlayer? _ambient;
@@ -46,7 +48,11 @@ public partial class AudioManager : Node
 
     public override void _Process(double _)
     {
-        _mix.Tick(RealSlice());
+        var step = RealSlice();
+        _mix.Tick(step);
+        _focus.Tick(step);
+        ApplyFocusBed();
+        ApplyVolume();
         if (_drums == null)
             return;
         _drums.VolumeDb = _mix.Drums <= 0.001f ? -80f : Mathf.LinearToDb(_mix.Drums);
@@ -84,6 +90,12 @@ public partial class AudioManager : Node
 
     public static void Play(SfxCue cue) => Current?.PlayCue(cue);
 
+    public static void PlayAt(SfxCue cue, float pitch, float volumeDb = 0f) => Current?.PlayShaped(cue, pitch, volumeDb);
+
+    public static void EnterFocus() => Current?.BeginFocusBed();
+
+    public static void LeaveFocus() => Current?.EndFocusBed();
+
     public static void EnterCombat() => Current?.BeginCombat();
 
     public static void LeaveCombat() => Current?._mix.LeaveCombat();
@@ -101,12 +113,33 @@ public partial class AudioManager : Node
 
     public void PlayCue(SfxCue cue)
     {
+        var pitch = CueBank.LocksPitch(cue) ? 1f : SfxPitch.Next(_rng);
+        PlayShaped(cue, pitch, 0f);
+    }
+
+    private void PlayShaped(SfxCue cue, float pitch, float volumeDb)
+    {
         if (!_cues.TryGetValue(cue, out var clips) || clips.Count == 0 || _pool.Count == 0)
             return;
         var player = NextPlayer();
         player.Stream = clips[CueBank.Variant(_rng, clips.Count)];
-        player.PitchScale = SfxPitch.Next(_rng);
+        player.PitchScale = pitch;
+        player.VolumeDb = volumeDb;
         player.Play();
+    }
+
+    private void BeginFocusBed()
+    {
+        _focus.Enter();
+        ApplyFocusBed();
+        ApplyVolume();
+    }
+
+    private void EndFocusBed()
+    {
+        _focus.Leave();
+        ApplyFocusBed();
+        ApplyVolume();
     }
 
     private void Select(int row)
@@ -224,9 +257,48 @@ public partial class AudioManager : Node
         return index;
     }
 
+    private void ApplyFocusBed()
+    {
+        var sfx = AudioServer.GetBusIndex("SFX");
+        if (sfx < 0)
+            return;
+        if (_focus.Filtering)
+        {
+            if (!BusHasLowpass(sfx))
+            {
+                _lowpass ??= new AudioEffectLowPassFilter();
+                AudioServer.AddBusEffect(sfx, _lowpass);
+            }
+            for (var i = 0; i < AudioServer.GetBusEffectCount(sfx); i++)
+            {
+                if (AudioServer.GetBusEffect(sfx, i) is AudioEffectLowPassFilter live)
+                    live.CutoffHz = _focus.Cutoff;
+            }
+            return;
+        }
+        if (_lowpass == null && !BusHasLowpass(sfx))
+            return;
+        for (var i = AudioServer.GetBusEffectCount(sfx) - 1; i >= 0; i--)
+        {
+            if (AudioServer.GetBusEffect(sfx, i) is AudioEffectLowPassFilter)
+                AudioServer.RemoveBusEffect(sfx, i);
+        }
+        _lowpass = null;
+    }
+
+    private static bool BusHasLowpass(int bus)
+    {
+        for (var i = 0; i < AudioServer.GetBusEffectCount(bus); i++)
+        {
+            if (AudioServer.GetBusEffect(bus, i) is AudioEffectLowPassFilter)
+                return true;
+        }
+        return false;
+    }
+
     private void ApplyVolume()
     {
-        SetBus("Music", _volume.Music);
+        SetBus("Music", _volume.Music * _focus.Music);
         SetBus("SFX", _volume.Sfx);
     }
 
