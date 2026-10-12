@@ -271,24 +271,28 @@ public static class CueBank
 
 public sealed class MusicMix
 {
-    public const float CombatFadeIn = 0.5f;
+    public const float CombatSweepSeconds = 0.3f;
     public const float ClearFadeOut = 1f;
 
     public float Drums { get; private set; }
     public bool AmbientOn { get; private set; } = true;
     private float _target;
     private float _span = ClearFadeOut;
+    private float _entryDelay;
 
     public void EnterCombat()
     {
         AmbientOn = true;
-        _target = 1f;
-        _span = CombatFadeIn;
+        Drums = 0f;
+        _target = 0f;
+        _span = 0f;
+        _entryDelay = CombatSweepSeconds;
     }
 
     public void LeaveCombat()
     {
         AmbientOn = true;
+        _entryDelay = 0f;
         _target = 0f;
         _span = ClearFadeOut;
     }
@@ -296,6 +300,7 @@ public sealed class MusicMix
     public void ResetExplore()
     {
         AmbientOn = true;
+        _entryDelay = 0f;
         _target = 0f;
         Drums = 0f;
         _span = ClearFadeOut;
@@ -306,6 +311,16 @@ public sealed class MusicMix
         AmbientOn = true;
         if (dt < 0f)
             dt = 0f;
+        if (_entryDelay > 0f)
+        {
+            _entryDelay -= dt;
+            if (_entryDelay > 0.001f)
+                return;
+            Drums = 1f;
+            _target = 1f;
+            _span = 0f;
+            return;
+        }
         var rate = _span <= 0.0001f ? 1f : dt / _span;
         if (Drums < _target)
             Drums = MathF.Min(_target, Drums + rate);

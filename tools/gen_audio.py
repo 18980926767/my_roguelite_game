@@ -12,11 +12,14 @@ Run from the repo root:
 
 Output:
     audio/sfx/<cue>-<n>.wav     two or three variants of each cue
-    audio/music/ambient.wav     bass + arpeggio, always playing
-    audio/music/drums.wav       melody + drums, same length, fades in during a fight
+    audio/music/ambient.wav       bass + arpeggio, always playing
+    audio/music/drums.wav         combat layer, same length, cuts in during a fight
+    audio/music/combat_sweep.wav  0.3 s downward noise sweep before the cut
 
-The piece is D minor, 100 BPM, 4/4, eight bars (19.2 s). Chords last two bars
-each: Dm, B-flat, F, C. Both files share one sample grid so they stay in time.
+The bed is D minor, 100 BPM, 4/4, eight bars (19.2 s). Chords last two bars
+each: Dm, B-flat, F, C. Both loops share one sample grid so they stay in time.
+The combat layer is a separate pattern on that same grid: pumping square bass,
+a short motif, and a busier drum machine. Ambient notes are left as they were.
 """
 
 from __future__ import annotations
@@ -249,12 +252,6 @@ BEAT = SR * 60 // BPM
 LOOP_BEATS = 8 * 4
 LOOP_SAMPLES = LOOP_BEATS * BEAT
 
-# The written melody is eight quarter notes. That fills two bars, so the first
-# line is played twice across the first four bars. The second line fills bars
-# 5–6, then D is held for the last two bars so the loop comes home.
-MELODY_A = ("A4", "C5", "D5", "C5", "A4", "F4", "G4", "A4")
-MELODY_B = ("F4", "G4", "A4", "C5", "Bb4", "A4", "G4", "E4")
-
 CHORDS = (
     # root, fifth, arp: root, third, fifth, third
     ("Dm", "D2", "A2", ("D4", "F4", "A4", "F4")),
@@ -311,11 +308,10 @@ def voice(kind: str, freq: float, count: int, gain: float, duty: float = 0.5, de
     return out
 
 
-def melody_events() -> list[tuple[str, int]]:
-    events = [(name, 1) for name in MELODY_A] * 2
-    events.extend((name, 1) for name in MELODY_B)
-    events.append(("D4", 8))
-    return events
+def shift_octave(name: str, steps: int) -> str:
+    if name[1:2] in ("b", "#"):
+        return f"{name[:2]}{int(name[2:]) + steps}"
+    return f"{name[0]}{int(name[1:]) + steps}"
 
 
 def ambient_loop() -> list[float]:
@@ -358,23 +354,96 @@ def snare_hit() -> list[float]:
         amp = math.exp(-index / (0.02 * SR))
         if index < 8:
             amp *= index / 8
-        out[index] = sample * amp * 0.28
+        out[index] = sample * amp * 0.34
+    return out
+
+
+def hat_hit() -> list[float]:
+    """A short closed hat. One sample is reused so the sixteenths stay a clock."""
+    count = int(SR * 0.028)
+    rng = random.Random(19)
+    burst = [rng.uniform(-1.0, 1.0) for _ in range(count)]
+    burst = [burst[index] - (burst[index - 1] if index else 0.0) for index in range(count)]
+    out = [0.0] * count
+    for index, sample in enumerate(burst):
+        amp = math.exp(-index / (0.007 * SR))
+        if index < 4:
+            amp *= index / 4
+        out[index] = sample * amp * 0.16
     return out
 
 
 def combat_loop() -> list[float]:
-    """Melody plus kick on beats 1 and 3, noise snare on beats 2 and 4."""
+    """Driving combat bed on the same 8-bar grid as the ambient loop.
+
+    Bass is a square D2 on every sixteenth. The last beat of each bar lifts
+    to E-flat and lands back on D. The motif is four eighths (D D F E-flat)
+    plus an eighth rest, and bars 5–8 repeat that cell up an octave. Drums:
+    kick on 1, the second half of 2, and 3; snare on 2 and 4; hats every
+    sixteenth.
+    """
     out = [0.0] * LOOP_SAMPLES
-    at = 0
-    for name, beats in melody_events():
-        count = beats * BEAT
-        mix_into(out, voice("square", note_hz(name), count, 0.30, duty=0.5), at)
-        at += count
+    eighth = BEAT // 2
+    sixteenth = BEAT // 4
+    for bar in range(8):
+        origin = bar * 4 * BEAT
+        for step in range(16):
+            # Last beat: D, E-flat, E-flat, D so the bar lifts and comes home.
+            name = "Eb2" if step in (13, 14) else "D2"
+            note = voice("square", note_hz(name), sixteenth, 0.34, duty=0.5, decay_s=0.05)
+            mix_into(out, note, origin + step * sixteenth)
+
+    cell = ("D4", "D4", "F4", "Eb4", None)
+    eighth_at = 0
+    total_eighths = LOOP_BEATS * 2
+    while eighth_at < total_eighths:
+        high = eighth_at // 8 >= 4
+        for name in cell:
+            if eighth_at >= total_eighths:
+                break
+            if name:
+                note_name = shift_octave(name, 1) if high else name
+                stab = voice("square", note_hz(note_name), eighth, 0.30, duty=0.5, decay_s=0.11)
+                mix_into(out, stab, eighth_at * eighth)
+            eighth_at += 1
+
     kick = kick_hit()
     snare = snare_hit()
-    for beat in range(LOOP_BEATS):
-        hit = kick if beat % 2 == 0 else snare
-        mix_into(out, hit, beat * BEAT)
+    hat = hat_hit()
+    for bar in range(8):
+        origin = bar * 4 * BEAT
+        for step in range(16):
+            mix_into(out, hat, origin + step * sixteenth)
+        mix_into(out, kick, origin)
+        mix_into(out, snare, origin + BEAT)
+        mix_into(out, kick, origin + BEAT + BEAT // 2)
+        mix_into(out, kick, origin + 2 * BEAT)
+        mix_into(out, snare, origin + 3 * BEAT)
+    return out
+
+
+def combat_sweep() -> list[float]:
+    """0.3 s noise sweep, bright down to a dull rumble, played once on entry."""
+    count = int(SR * 0.3)
+    rng = random.Random(3)
+    raw = [rng.uniform(-1.0, 1.0) for _ in range(count)]
+    y = 0.0
+    out = [0.0] * count
+    for index, sample in enumerate(raw):
+        frac = index / max(1, count - 1)
+        cutoff = 7200.0 * (80.0 / 7200.0) ** frac
+        rc = 1.0 / (2.0 * math.pi * cutoff)
+        dt = 1.0 / SR
+        alpha = dt / (rc + dt)
+        y += alpha * (sample - y)
+        grit = sample * (1.0 - frac) * 0.4
+        env = 1.0
+        if index < 60:
+            env = index / 60
+        tail = count - 500
+        if index > tail:
+            env *= (count - 1 - index) / max(1, count - tail)
+        out[index] = (y * 0.85 + grit) * env * 0.9
     return out
 
 
@@ -382,10 +451,9 @@ def main() -> None:
     for name, build in CUES.items():
         for variant in (1, 2, 3):
             write_wav(SFX / f"{name}-{variant}.wav", build(variant))
-    if sum(beats for _name, beats in melody_events()) != LOOP_BEATS:
-        raise SystemExit("melody does not fill the 8-bar loop")
     write_wav(MUSIC / "ambient.wav", ambient_loop())
     write_wav(MUSIC / "drums.wav", combat_loop())
+    write_wav(MUSIC / "combat_sweep.wav", combat_sweep())
     print(f"wrote sfx to {SFX}")
     print(f"wrote music to {MUSIC}")
 

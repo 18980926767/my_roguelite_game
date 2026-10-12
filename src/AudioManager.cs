@@ -15,6 +15,7 @@ public partial class AudioManager : Node
     private readonly List<AudioStreamPlayer> _pool = new();
     private AudioStreamPlayer? _ambient;
     private AudioStreamPlayer? _drums;
+    private AudioStreamPlayer? _sweep;
     private CanvasLayer? _layer;
     private Button? _musicButton;
     private Button? _sfxButton;
@@ -83,11 +84,20 @@ public partial class AudioManager : Node
 
     public static void Play(SfxCue cue) => Current?.PlayCue(cue);
 
-    public static void EnterCombat() => Current?._mix.EnterCombat();
+    public static void EnterCombat() => Current?.BeginCombat();
 
     public static void LeaveCombat() => Current?._mix.LeaveCombat();
 
     public static void ResetExplore() => Current?._mix.ResetExplore();
+
+    private void BeginCombat()
+    {
+        _mix.EnterCombat();
+        if (_sweep?.Stream == null)
+            return;
+        _sweep.Stop();
+        _sweep.Play();
+    }
 
     public void PlayCue(SfxCue cue)
     {
@@ -281,6 +291,12 @@ public partial class AudioManager : Node
             _drums = new AudioStreamPlayer { Bus = "Music", Stream = drums, VolumeDb = -80f };
             AddChild(_drums);
             _drums.Play();
+        }
+        var sweep = LoadWav("res://audio/music/combat_sweep.wav", loop: false);
+        if (sweep != null)
+        {
+            _sweep = new AudioStreamPlayer { Bus = "Music", Stream = sweep, VolumeDb = 0f };
+            AddChild(_sweep);
         }
     }
 
