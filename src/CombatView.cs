@@ -81,6 +81,8 @@ public sealed partial class CombatView : Control
     private float _swing;
     private float _shake;
     private float _hitStop;
+    private readonly FxHost _fx;
+    private readonly WhiteFrame _flash;
     private readonly ClearBeat _clear = new();
     private readonly List<Pop> _pops = new();
     private readonly Dir[] _exits;
@@ -154,6 +156,10 @@ public sealed partial class CombatView : Control
         AddChild(_actions);
         BuildFocusButtons();
         SetFocusUi(false);
+        _fx = new FxHost { TextureFilter = TextureFilterEnum.Nearest };
+        AddChild(_fx);
+        _flash = new WhiteFrame();
+        AddChild(_flash);
     }
 
     public override void _Process(double delta)
@@ -168,11 +174,12 @@ public sealed partial class CombatView : Control
         // Time-stop sets Engine.TimeScale to 0, so the cut-in advances on real time.
         TickPortrait(RealSlice());
 
-        if (_clear.Running)
+        if (_clear.Running || _clear.Done)
         {
             _hitStop = 0f;
-            _clear.Tick(MathF.Min(dt, 0.05f));
-            if (_clear.Done)
+            if (_clear.Running)
+                _clear.Tick(MathF.Min(dt, 0.05f));
+            if (_clear.Done && !_fx.Busy)
             {
                 FinishClear();
                 return;
@@ -689,6 +696,7 @@ public sealed partial class CombatView : Control
         if (index < 0 || index >= _foes.Count || !_foes[index].Alive)
         {
             Note("这一下没打到人。");
+            AudioManager.Play(SfxCue.Swing);
             return;
         }
         var foe = _foes[index];
@@ -761,6 +769,8 @@ public sealed partial class CombatView : Control
 
     private void MovePlayer(float dt)
     {
+        if (AudioManager.Current?.MenuOpen == true)
+            return;
         var input = Vector2.Zero;
         if (Input.IsKeyPressed(Key.A) || Input.IsKeyPressed(Key.Left)) input.X -= 1;
         if (Input.IsKeyPressed(Key.D) || Input.IsKeyPressed(Key.Right)) input.X += 1;
@@ -975,6 +985,7 @@ public sealed partial class CombatView : Control
         _hurtFlash = CombatFeel.HitFlashSeconds;
         _shake = MathF.Max(_shake, 7f);
         SpawnPop(_player, amount.ToString(), new Color("ff8b8b"));
+        AudioManager.Play(SfxCue.Hurt);
     }
 
     private Vector2 ClampFoe(Vector2 pos)
@@ -1006,6 +1017,9 @@ public sealed partial class CombatView : Control
         _shake = MathF.Max(0f, _shake - dt * 28f);
         _hurtFlash = MathF.Max(0f, _hurtFlash - dt);
         _swing = MathF.Max(0f, _swing - dt);
+        _fx.Position = ShakeOffset();
+        _fx.Visible = _portraitLeft <= 0f;
+        _fx.Tick(dt);
         foreach (var foe in _foes)
         {
             foe.HitFlash = MathF.Max(0f, foe.HitFlash - dt);
@@ -1030,6 +1044,9 @@ public sealed partial class CombatView : Control
         _hitStop = 0f;
         Engine.TimeScale = 1;
         _clear.NotifyLiving(0);
+        AudioManager.Play(SfxCue.Clear);
+        AudioManager.Play(SfxCue.Door);
+        AudioManager.LeaveCombat();
         Note("房间清空。出口已经打开。");
     }
 
@@ -1043,6 +1060,7 @@ public sealed partial class CombatView : Control
             _run.Mana = Math.Min(_run.MaxMana, _run.Mana + Loot.ManaFromLoot);
             extra = $" 蓝 +{Loot.ManaFromLoot}。";
         }
+        AudioManager.Play(SfxCue.Pickup);
         End(true, $"房间清空。获得 {gold} 金币。{extra}");
     }
 
@@ -1053,12 +1071,25 @@ public sealed partial class CombatView : Control
             foe.HitPunch = MathF.Max(foe.HitPunch, CombatFeel.HitPunchSeconds);
         if (amount > 0)
             SpawnPop(foe.Pos, amount.ToString(), color);
+        if (heavy)
+        {
+            var dir = foe.Pos - _player;
+            _fx.Hit(foe.Pos, dir, _rng);
+            AudioManager.Play(SfxCue.Hit);
+        }
         if (foe.Hp <= 0 && !foe.DeathPlayed)
         {
             foe.DeathPlayed = true;
             foe.DeathLeft = CombatFeel.DeathSeconds;
             foe.HitFlash = CombatFeel.HitFlashSeconds;
             foe.HitPunch = CombatFeel.HitPunchSeconds;
+            var boss = foe.Spec.MaxHp > 80;
+            var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+            var tex = boss ? Art.Boss : dasher ? Art.Dasher : Art.Shooter;
+            var ground = foe.Pos.Y + Look.FoeSpan(boss, dasher) * 0.45f;
+            _fx.Death(foe.Pos, ground, PixelTex.MainOf(tex), _rng);
+            _flash.Pop();
+            AudioManager.Play(SfxCue.Death);
         }
         if (heavy)
             _swing = CombatFeel.HitPunchSeconds;
@@ -1338,6 +1369,7 @@ public sealed partial class CombatView : Control
             return;
         _ended = true;
         Engine.TimeScale = 1;
+        AudioManager.LeaveCombat();
         _finished(won, message);
     }
 }

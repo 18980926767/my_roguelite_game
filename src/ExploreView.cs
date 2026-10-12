@@ -65,16 +65,16 @@ public sealed partial class ExploreView : Control
         top.AddChild(row);
 
         _peekButton = UiKit.Button("窥视", OnPeek);
-        _peekButton.CustomMinimumSize = new Vector2(160, 44);
+        _peekButton.CustomMinimumSize = new Vector2(220, 44);
         _peekButton.FocusMode = FocusModeEnum.None;
         row.AddChild(_peekButton);
 
         _enterButton = UiKit.Button("进入", OnEnter);
-        _enterButton.CustomMinimumSize = new Vector2(160, 44);
+        _enterButton.CustomMinimumSize = new Vector2(220, 44);
         _enterButton.FocusMode = FocusModeEnum.None;
         row.AddChild(_enterButton);
 
-        _log = UiKit.Label("你在出生的房间里。WASD 或方向键走动。小地图在右下角，不能点。");
+        _log = UiKit.Label("你在出生的房间里。WASD 或方向键走动。小地图在右下角，不能点。按 V 调音量。");
         top.AddChild(_log);
 
         _player = new Vector2(640, 360);
@@ -84,7 +84,7 @@ public sealed partial class ExploreView : Control
     public override void _Process(double delta)
     {
         FitRoom();
-        if (AcceptKeys && Visible)
+        if (AcceptKeys && Visible && AudioManager.Current?.MenuOpen != true)
         {
             var input = Vector2.Zero;
             if (Input.IsKeyPressed(Key.A) || Input.IsKeyPressed(Key.Left)) input.X -= 1;
@@ -114,7 +114,7 @@ public sealed partial class ExploreView : Control
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (!AcceptKeys || !Visible || _atDoor == null)
+        if (!AcceptKeys || !Visible || _atDoor == null || AudioManager.Current?.MenuOpen == true)
             return;
         if (@event is not InputEventKey key)
             return;

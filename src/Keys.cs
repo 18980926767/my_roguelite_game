@@ -51,7 +51,8 @@ public sealed class ChoiceList
 {
     private readonly List<Button> _buttons = new();
     private readonly List<Action> _actions = new();
-    private readonly List<string> _labels = new();
+    private readonly List<string> _raw = new();
+    private readonly List<bool> _cancels = new();
     private int _index;
 
     public int Count => _buttons.Count;
@@ -60,7 +61,8 @@ public sealed class ChoiceList
     {
         _buttons.Clear();
         _actions.Clear();
-        _labels.Clear();
+        _raw.Clear();
+        _cancels.Clear();
         _index = 0;
     }
 
@@ -82,20 +84,27 @@ public sealed class ChoiceList
     public bool SelectedDisabled =>
         _buttons.Count > 0 && _buttons[_index].Disabled;
 
-    public void Add(Button button, string label, Action action)
+    public void Add(Button button, string label, Action action, bool cancel = false)
     {
-        var shown = _buttons.Count < 9 ? $"[{_buttons.Count + 1}] {label}" : label;
         _buttons.Add(button);
         _actions.Add(action);
-        _labels.Add(shown);
+        _raw.Add(label);
+        _cancels.Add(cancel);
         PaintAll();
+    }
+
+    public void Select(Button button)
+    {
+        var index = _buttons.IndexOf(button);
+        if (index >= 0)
+            Index = index;
     }
 
     public void SetLabel(int index, string label)
     {
-        if (index < 0 || index >= _labels.Count)
+        if (index < 0 || index >= _raw.Count)
             return;
-        _labels[index] = index < 9 ? $"[{index + 1}] {label}" : label;
+        _raw[index] = label;
         PaintAll();
     }
 
@@ -131,12 +140,109 @@ public sealed class ChoiceList
     public void PaintAll()
     {
         for (var i = 0; i < _buttons.Count; i++)
-            Paint(_buttons[i], _labels[i], i == _index);
+            Paint(_buttons[i], Shown(i), i == _index);
+    }
+
+    private string Shown(int index)
+    {
+        var number = index < 9 ? $"[{index + 1}] " : "";
+        var cancel = _cancels[index] ? "  [Esc]" : "";
+        return $"{number}{_raw[index]}{cancel}";
     }
 
     public static void Paint(Button button, string label, bool picked)
     {
-        button.Text = picked ? $"▶ {label}" : label;
-        button.Modulate = picked ? new Color(1.28f, 1.05f, 0.48f) : Colors.White;
+        button.ClipText = false;
+        button.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
+        button.Alignment = HorizontalAlignment.Left;
+        button.FocusMode = Control.FocusModeEnum.None;
+        var text = picked && !label.Contains("[J]") ? $"{label}  [J]" : label;
+        button.Text = picked ? $"▶ {text}" : text;
+        button.Modulate = Colors.White;
+        Remember(button);
+        if (picked)
+            ApplyPicked(button);
+        else
+            ApplyIdle(button);
     }
+
+    private static void Remember(Button button)
+    {
+        if (button.HasMeta(Remembered))
+            return;
+        button.SetMeta(Remembered, true);
+        foreach (var color in InkNames)
+            button.SetMeta(IdlePrefix + color, button.GetThemeColor(color));
+        foreach (var box in BoxNames)
+        {
+            var had = button.HasThemeStyleboxOverride(box);
+            button.SetMeta(HadPrefix + box, had);
+            if (had)
+                button.SetMeta(BoxPrefix + box, button.GetThemeStylebox(box));
+        }
+    }
+
+    private static void ApplyPicked(Button button)
+    {
+        var ink = new Color("fff6d0");
+        foreach (var color in InkNames)
+            button.AddThemeColorOverride(color, ink);
+        button.AddThemeColorOverride("font_outline_color", ink);
+        button.AddThemeConstantOverride("outline_size", 2);
+        foreach (var box in BoxNames)
+            button.AddThemeStyleboxOverride(box, PickedBox);
+    }
+
+    private static void ApplyIdle(Button button)
+    {
+        foreach (var color in InkNames)
+            button.AddThemeColorOverride(color, button.GetMeta(IdlePrefix + color).AsColor());
+        button.AddThemeConstantOverride("outline_size", 0);
+        foreach (var box in BoxNames)
+        {
+            if (button.GetMeta(HadPrefix + box, false).AsBool())
+                button.AddThemeStyleboxOverride(box, (StyleBox)button.GetMeta(BoxPrefix + box));
+            else
+                button.RemoveThemeStyleboxOverride(box);
+        }
+    }
+
+    private const string Remembered = "choice_idle";
+    private const string IdlePrefix = "idle_";
+    private const string HadPrefix = "had_";
+    private const string BoxPrefix = "box_";
+
+    private static readonly string[] InkNames =
+    {
+        "font_color",
+        "font_hover_color",
+        "font_pressed_color",
+        "font_focus_color",
+        "font_disabled_color",
+    };
+
+    private static readonly string[] BoxNames =
+    {
+        "normal",
+        "hover",
+        "pressed",
+        "hover_pressed",
+        "focus",
+        "disabled",
+    };
+
+    private static readonly StyleBoxFlat PickedBox = new()
+    {
+        BgColor = new Color("2a2018"),
+        BorderColor = new Color("f9c22b"),
+        BorderWidthLeft = 3,
+        BorderWidthTop = 3,
+        BorderWidthRight = 3,
+        BorderWidthBottom = 3,
+        ContentMarginLeft = 12,
+        ContentMarginTop = 6,
+        ContentMarginRight = 12,
+        ContentMarginBottom = 6,
+        AntiAliasing = false,
+    };
 }
