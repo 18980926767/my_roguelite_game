@@ -226,6 +226,7 @@ public enum SfxCue
     Clear,
     Door,
     Pickup,
+    Ascend,
 }
 
 public static class SfxPitch
@@ -245,6 +246,8 @@ public static class CueBank
     public const int MinVariants = 2;
     public const int MaxVariants = 3;
 
+    public static bool LocksPitch(SfxCue cue) => cue == SfxCue.Ascend;
+
     public static string Prefix(SfxCue cue) => cue switch
     {
         SfxCue.Swing => "swing",
@@ -254,6 +257,7 @@ public static class CueBank
         SfxCue.Clear => "clear",
         SfxCue.Door => "door",
         SfxCue.Pickup => "pickup",
+        SfxCue.Ascend => "ascend",
         _ => "hit",
     };
 

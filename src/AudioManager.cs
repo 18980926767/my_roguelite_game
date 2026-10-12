@@ -95,7 +95,7 @@ public partial class AudioManager : Node
             return;
         var player = NextPlayer();
         player.Stream = clips[CueBank.Variant(_rng, clips.Count)];
-        player.PitchScale = SfxPitch.Next(_rng);
+        player.PitchScale = CueBank.LocksPitch(cue) ? 1f : SfxPitch.Next(_rng);
         player.Play();
     }
 

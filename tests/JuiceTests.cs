@@ -210,6 +210,12 @@ public class JuiceTests
         Assert.True(ambient.Peak > 1000);
         Assert.True(drums.Peak > 1000);
         Assert.True(File.Exists(Path.Combine(root, "tools", "gen_audio.py")));
+
+        var ascends = Directory.GetFiles(Path.Combine(root, "audio", "sfx"), "ascend-*.wav");
+        Assert.InRange(ascends.Length, CueBank.MinVariants, CueBank.MaxVariants);
+        Assert.All(ascends, file => Assert.InRange(WavFile.Read(file).Seconds, 0.78f, 0.82f));
+        Assert.True(CueBank.LocksPitch(SfxCue.Ascend));
+        Assert.False(CueBank.LocksPitch(SfxCue.Clear));
     }
 
     private static float Luma(Rgb color) =>

@@ -90,6 +90,18 @@ public sealed partial class CombatView : Control
     private float _portraitLeft;
     private int _portraitFoe = -1;
     private bool _portraitSword;
+    private float _rankLeft;
+    private float _rankFlash;
+    private float _followSlash;
+    private Vector2 _followFrom;
+    private Vector2 _followTo;
+    private readonly List<FollowUp> _followUps = new();
+
+    private readonly struct FollowUp
+    {
+        public int Index { get; init; }
+        public float Ratio { get; init; }
+    }
     private ulong _realClock;
     private Label _hud = null!;
     private Label _logLabel = null!;
@@ -135,7 +147,7 @@ public sealed partial class CombatView : Control
         _hud.OffsetLeft = 36;
         _hud.OffsetTop = 10;
         _hud.OffsetRight = 640;
-        _hud.OffsetBottom = 102;
+        _hud.OffsetBottom = 118;
         _hud.ClipText = false;
         AddChild(_hud);
         _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格、J 或回车进入时停，可以一直不按。");
@@ -200,6 +212,8 @@ public sealed partial class CombatView : Control
         if (_hitStop > 0f)
         {
             _hitStop = MathF.Max(0f, _hitStop - MathF.Min(dt, 0.05f));
+            if (_hitStop <= 0f)
+                ReleaseFollowUp();
             RefreshHud();
             QueueRedraw();
             return;
@@ -334,8 +348,8 @@ public sealed partial class CombatView : Control
     {
         FitArena();
         DrawRect(new Rect2(Vector2.Zero, Size), new Color("141820"));
-        Look.Chrome(this, new Rect2(16, 6, Mathf.Max(32, Size.X - 32), 108));
-        var bar = new Rect2(_arena.Position.X, 128, _arena.Size.X, 14);
+        Look.Chrome(this, new Rect2(16, 6, Mathf.Max(32, Size.X - 32), 124));
+        var bar = new Rect2(_arena.Position.X, 136, _arena.Size.X, 14);
         DrawRect(bar, new Color("2c2c38"));
         DrawRect(new Rect2(bar.Position, new Vector2(bar.Size.X * _charge, bar.Size.Y)), new Color("f1c40f"));
         DrawSetTransform(ShakeOffset(), 0f, Vector2.One);
@@ -354,10 +368,13 @@ public sealed partial class CombatView : Control
             DrawFoe(_foes[i], _phase == Phase.Focus && i == AttackTarget());
         var swing = 1f + Unit(_swing, CombatFeel.HitPunchSeconds) * 0.1f;
         Look.Person(this, _player, _face, swing, Unit(_hurtFlash, CombatFeel.HitFlashSeconds));
+        DrawHeldSword(_player, _face, swing);
+        DrawFollowSlash();
         DrawPops();
         if (_clear.Running)
             DrawClearBanner();
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        DrawRank();
         DrawPortrait();
     }
 
@@ -373,16 +390,24 @@ public sealed partial class CombatView : Control
     private void DrawStrikePreview(Foe foe, bool boss, bool dasher)
     {
         var mult = _run.ActiveWeapon?.BasicMultiplier ?? 0.5f;
+        var tier = ActiveSwordTier();
         var raw = (int)MathF.Round(Math.Max(0f, _run.Attack * mult));
-        var actual = CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense);
+        var actual = SwordImbue.WithBonus(CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense), tier);
         var blocked = Math.Min(foe.Shield, actual);
         var span = Look.FoeSpan(boss, dasher);
         var x = Mathf.Clamp(foe.Pos.X - 52f, _arena.Position.X + 4f, _arena.End.X - 150f);
         var y = Mathf.Clamp(foe.Pos.Y - span * 0.5f - 34f, _arena.Position.Y + 4f, _arena.End.Y - 36f);
         DrawString(UiKit.Font, new Vector2(x, y), $"{raw} → {actual}", fontSize: 14, modulate: new Color("f7f3ea"));
-        if (blocked <= 0)
+        var line = 16f;
+        if (blocked > 0)
+        {
+            DrawString(UiKit.Font, new Vector2(x, y + line), $"护盾 −{blocked}", fontSize: 14, modulate: new Color("f0d78c"));
+            line += 16f;
+        }
+        if (!SwordImbue.FollowsUp(tier))
             return;
-        DrawString(UiKit.Font, new Vector2(x, y + 16f), $"护盾 −{blocked}", fontSize: 14, modulate: new Color("f0d78c"));
+        var extra = CombatMath.BasicDamage(_run.Attack, SwordImbue.FollowUpRatio(mult), foe.Spec.Defense);
+        DrawString(UiKit.Font, new Vector2(x, y + line), $"追加 {extra}", fontSize: 14, modulate: new Color("bffff6"));
     }
 
     private void BeginFocus()
@@ -393,6 +418,7 @@ public sealed partial class CombatView : Control
         Engine.TimeScale = 0;
         _ap = _run.ActionPoints;
         _queue.Clear();
+        _followUps.Clear();
         _aimBasic = true;
         _portraitLeft = 0f;
         _portraitFoe = -1;
@@ -656,7 +682,13 @@ public sealed partial class CombatView : Control
             if (plan.Kind == Act.Attack)
                 ResolveAttack(plan.Target);
             else if (plan.Kind == Act.Skill)
-                Note("随机属性：" + _run.ApplyRandomBonus(_rng));
+            {
+                var bonus = _run.ApplyRandomBonus(_rng);
+                var step = SwordImbue.UseSkill(_run.OrdinarySword);
+                Note("随机属性：" + bonus);
+                if (step.RankedUp)
+                    PresentRank();
+            }
         }
         var extraPause = _ap >= 1;
         _queue.Clear();
@@ -702,7 +734,8 @@ public sealed partial class CombatView : Control
         var foe = _foes[index];
         var weapon = _run.ActiveWeapon;
         var mult = weapon?.BasicMultiplier ?? 0.5f;
-        var damage = CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense);
+        var tier = weapon is { IsOrdinarySword: true } ? SwordImbue.Tier(weapon.Stain) : 1;
+        var damage = SwordImbue.WithBonus(CombatMath.BasicDamage(_run.Attack, mult, foe.Spec.Defense), tier);
         var shield = foe.Shield;
         var hp = foe.Hp;
         CombatMath.ApplyStrike(ref shield, ref hp, damage);
@@ -717,6 +750,65 @@ public sealed partial class CombatView : Control
             knock = ApplyKnockback(foe, weapon.KnockbackStacks);
         PresentFoeHit(foe, damage, new Color("ffe08a"), heavy: true);
         Note($"砍中 {foe.Spec.Name}，伤害 {damage}。{knock}");
+        if (!SwordImbue.FollowsUp(tier) || !foe.Alive)
+            return;
+        _followUps.Add(new FollowUp { Index = index, Ratio = SwordImbue.FollowUpRatio(mult) });
+        if (_hitStop <= 0f)
+            ReleaseFollowUp();
+    }
+
+    private void ReleaseFollowUp()
+    {
+        while (_followUps.Count > 0)
+        {
+            var swing = _followUps[0];
+            _followUps.RemoveAt(0);
+            if (LandFollowUp(swing))
+                return;
+        }
+    }
+
+    private bool LandFollowUp(FollowUp swing)
+    {
+        var index = swing.Index;
+        if (index < 0 || index >= _foes.Count || !_foes[index].Alive)
+            return false;
+        var foe = _foes[index];
+        var damage = CombatMath.BasicDamage(_run.Attack, swing.Ratio, foe.Spec.Defense);
+        var shield = foe.Shield;
+        var hp = foe.Hp;
+        CombatMath.ApplyStrike(ref shield, ref hp, damage);
+        foe.Shield = shield;
+        foe.Hp = hp;
+        _followFrom = _player;
+        _followTo = foe.Pos;
+        _followSlash = 0.28f;
+        PresentFoeHit(foe, damage, new Color("d8fffb"), heavy: true);
+        Note($"剑又砍了一刀，伤害 {damage}。");
+        return _hitStop > 0f;
+    }
+
+    private void PresentRank()
+    {
+        _rankLeft = SwordImbue.RankTextSeconds;
+        _rankFlash = SwordImbue.RankFlashSeconds;
+        _flash.Pop();
+        AudioManager.Play(SfxCue.Ascend);
+        Note(SwordImbue.RankText);
+    }
+
+    private int ActiveSwordTier()
+    {
+        if (_run.ActiveWeapon is not { IsOrdinarySword: true } weapon)
+            return 1;
+        return SwordImbue.Tier(weapon.Stain);
+    }
+
+    private void DrawHeldSword(Vector2 pos, Vector2 face, float scale)
+    {
+        if (_run.ActiveWeapon is not { IsOrdinarySword: true })
+            return;
+        Look.Sword(this, pos, face, ActiveSwordTier(), scale);
     }
 
     private string ApplyKnockback(Foe foe, int stacks)
@@ -1009,7 +1101,8 @@ public sealed partial class CombatView : Control
                 };
         _hud.Text =
             $"{phase}\n生命 {_run.Hp}/{_run.MaxHp}  魔力 {_run.Mana}/{_run.MaxMana}  护盾 {_run.Shield}\n" +
-            $"力量 {_run.Attack}  防御 {_run.Defense}  行动点 {_ap}  冷却 {_run.SkillCooldown:0.0} 秒\n手持 {_run.ActiveWeapon?.Name}";
+            $"力量 {_run.Attack}  防御 {_run.Defense}  行动点 {_ap}  冷却 {_run.SkillCooldown:0.0} 秒\n" +
+            $"手持 {_run.ActiveWeapon?.Name}{SwordHud()}";
     }
 
     private void TickJuice(float dt)
@@ -1017,6 +1110,9 @@ public sealed partial class CombatView : Control
         _shake = MathF.Max(0f, _shake - dt * 28f);
         _hurtFlash = MathF.Max(0f, _hurtFlash - dt);
         _swing = MathF.Max(0f, _swing - dt);
+        _rankLeft = MathF.Max(0f, _rankLeft - dt);
+        _rankFlash = MathF.Max(0f, _rankFlash - dt);
+        _followSlash = MathF.Max(0f, _followSlash - dt);
         _fx.Position = ShakeOffset();
         _fx.Visible = _portraitLeft <= 0f;
         _fx.Tick(dt);
@@ -1254,7 +1350,9 @@ public sealed partial class CombatView : Control
         DrawRect(new Rect2(Vector2.Zero, size), new Color(0.05f, 0.04f, 0.06f, 0.94f));
         var left = new Vector2(size.X * 0.25f, size.Y * 0.58f);
         var right = new Vector2(size.X * 0.75f, size.Y * 0.56f) + tremble;
-        Look.Person(this, left, Vector2.Right, CutInScale(Art.Player, size.Y) * pop);
+        var personScale = CutInScale(Art.Player, size.Y) * pop;
+        Look.Person(this, left, Vector2.Right, personScale);
+        DrawHeldSword(left, Vector2.Right, personScale);
         DrawPortraitFoe(foe, right, CutInScale(PortraitTex(foe), size.Y) * pop * (1f + hit * 0.05f), hit);
         if (_portraitSword)
             DrawSwordTrail(size, t);
@@ -1299,12 +1397,17 @@ public sealed partial class CombatView : Control
         var dissolve = Mathf.Clamp((t - 0.42f) / 0.2f, 0f, 1f);
         var fade = 1f - dissolve;
         var tailLead = dissolve * 0.42f;
-        DrawSlashRibbon(size, head - 0.14f, 0.36f, tailLead, fade * 0.22f, 0.72f, core: false);
-        DrawSlashRibbon(size, head - 0.07f, 0.38f, tailLead, fade * 0.48f, 0.86f, core: false);
-        DrawSlashRibbon(size, head, 0.4f, tailLead, fade, 1f, core: true);
+        var tier = ActiveSwordTier();
+        var tint = tier <= 1 ? Colors.White : RgbOf(SwordImbue.Blade(tier));
+        var hot = SwordImbue.Glows(tier);
+        if (SwordImbue.ExtraTrailLayers(tier) > 0)
+            DrawSlashRibbon(size, head - 0.22f, 0.34f, tailLead, fade * 0.18f, 0.6f, core: false, tint, hot: false);
+        DrawSlashRibbon(size, head - 0.14f, 0.36f, tailLead, fade * 0.22f, 0.72f, core: false, tint, hot: false);
+        DrawSlashRibbon(size, head - 0.07f, 0.38f, tailLead, fade * 0.48f, 0.86f, core: false, tint, hot: false);
+        DrawSlashRibbon(size, head, 0.4f, tailLead, fade, 1f, core: true, tint, hot);
     }
 
-    private void DrawSlashRibbon(Vector2 size, float head, float length, float tailLead, float alpha, float widthMul, bool core)
+    private void DrawSlashRibbon(Vector2 size, float head, float length, float tailLead, float alpha, float widthMul, bool core, Color tint, bool hot)
     {
         if (alpha <= 0.02f)
             return;
@@ -1329,16 +1432,71 @@ public sealed partial class CombatView : Control
             pts[i] = pos + normal * width;
             pts[count * 2 - 1 - i] = pos - normal * width;
             var ink = alpha * Mathf.Lerp(0.04f, 1f, along);
-            cols[i] = new Color(1f, 1f, 1f, ink);
-            cols[count * 2 - 1 - i] = new Color(1f, 1f, 1f, ink * 0.75f);
+            cols[i] = new Color(tint.R, tint.G, tint.B, ink);
+            cols[count * 2 - 1 - i] = new Color(tint.R, tint.G, tint.B, ink * 0.75f);
             if (spine != null)
                 spine[i] = pos;
         }
         DrawPolygon(pts, cols);
         if (spine == null)
             return;
-        DrawPolyline(spine, new Color(1f, 1f, 1f, alpha), MathF.Max(2f, size.Y * 0.008f), true);
+        var spineColor = hot ? new Color(1f, 1f, 1f, alpha) : new Color(tint.R, tint.G, tint.B, alpha);
+        DrawPolyline(spine, spineColor, MathF.Max(2f, size.Y * 0.008f), true);
     }
+
+    private void DrawFollowSlash()
+    {
+        if (_followSlash <= 0f)
+            return;
+        var fade = Mathf.Clamp(_followSlash / 0.28f, 0f, 1f);
+        var tint = RgbOf(SwordImbue.Blade(3));
+        tint.A = fade;
+        var mid = (_followFrom + _followTo) * 0.5f;
+        var delta = _followTo - _followFrom;
+        var normal = new Vector2(-delta.Y, delta.X);
+        if (normal.LengthSquared() < 1f)
+            normal = Vector2.Right;
+        normal = normal.Normalized() * 36f;
+        var start = _followFrom.Lerp(mid, 0.25f) - normal * 0.35f;
+        var bend = mid + normal;
+        DrawLine(start, bend, tint, 8f);
+        DrawLine(bend, _followTo, tint, 8f);
+        var core = new Color(1f, 1f, 1f, fade);
+        DrawLine(start, bend, core, 3f);
+        DrawLine(bend, _followTo, core, 3f);
+    }
+
+    private void DrawRank()
+    {
+        var view = Size.X < 32f ? GetViewportRect().Size : Size;
+        if (_rankFlash > 0f)
+        {
+            var alpha = 0.42f * Mathf.Clamp(_rankFlash / SwordImbue.RankFlashSeconds, 0f, 1f);
+            DrawRect(new Rect2(Vector2.Zero, view), new Color(0.55f, 1f, 0.98f, alpha));
+        }
+        if (_rankLeft <= 0f)
+            return;
+        var fade = _rankLeft < 0.35f ? _rankLeft / 0.35f : 1f;
+        var banner = new Rect2(view.X * 0.5f - 180f, view.Y * 0.18f, 360f, 64f);
+        DrawRect(banner, new Color(0.05f, 0.12f, 0.14f, 0.82f * fade));
+        DrawRect(banner, new Color(0.55f, 1f, 0.96f, fade), false, 3f);
+        DrawString(
+            UiKit.Font,
+            banner.Position + new Vector2(0f, 42f),
+            SwordImbue.RankText,
+            HorizontalAlignment.Center,
+            banner.Size.X,
+            32,
+            new Color(0.85f, 1f, 0.98f, fade));
+    }
+
+    private string SwordHud()
+    {
+        var sword = _run.Backpack.FirstOrDefault(item => item.IsOrdinarySword);
+        return sword == null ? "" : $"    普通剑 {SwordImbue.HudLine(sword.Stain)}";
+    }
+
+    private static Color RgbOf(Rgb color) => new(color.R / 255f, color.G / 255f, color.B / 255f);
 
     private static void SlashSample(Vector2 size, float u, out Vector2 pos, out Vector2 normal)
     {

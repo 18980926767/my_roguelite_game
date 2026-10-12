@@ -194,6 +194,32 @@ def door(seed: int) -> list[float]:
     return crush(out, 5)
 
 
+def triad(notes: tuple[str, ...], seconds: float) -> list[float]:
+    """Square-wave chord. Notes stay in tune; the envelope only keeps the edges from clicking."""
+    count = max(1, int(SR * seconds))
+    mixed = [0.0] * count
+    gain = 1.0 / len(notes)
+    for name in notes:
+        tone = square(note_hz(name), seconds, duty=0.5)
+        shaped = envelope(tone, 0.012, max(0.0, seconds - 0.05), 0.038)
+        for index, sample in enumerate(shaped):
+            if index < count:
+                mixed[index] += sample * gain
+    return crush(mixed, 6)
+
+
+def ascend(seed: int) -> list[float]:
+    """D minor (D, F, A) for 0.4 s, then D major (D, F#, A) for 0.4 s.
+
+    Variants are the same sting. Pitch is locked at playback so the chord stays in D.
+    """
+    del seed
+    return concat([
+        triad(("D4", "F4", "A4"), 0.4),
+        triad(("D4", "F#4", "A4"), 0.4),
+    ])
+
+
 def pickup(seed: int) -> list[float]:
     pair = ((880, 1174), (988, 1318), (784, 1046))[seed % 3]
     parts: list[list[float]] = []
@@ -213,6 +239,7 @@ CUES = {
     "clear": clear,
     "door": door,
     "pickup": pickup,
+    "ascend": ascend,
 }
 
 

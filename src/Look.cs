@@ -63,6 +63,27 @@ public static class Look
         DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false, scale, flash, alpha);
     }
 
+    public static void Sword(CanvasItem canvas, Vector2 pos, Vector2 face, int tier, float scale = 1f)
+    {
+        var unit = ActorScale * Mathf.Max(0.05f, scale);
+        var flip = face.X < -0.01f ? -1f : 1f;
+        var hand = pos + new Vector2(5f * flip, 2f) * unit;
+        var tip = hand + new Vector2(2.2f * flip, -15f) * unit;
+        var width = MathF.Max(4f, 4f * scale);
+        if (SwordImbue.Glows(tier))
+        {
+            var glow = RgbColor(SwordImbue.Glow(tier));
+            glow.A = 0.55f;
+            canvas.DrawLine(hand, tip, glow, width * 3.2f);
+        }
+        canvas.DrawLine(hand, tip, RgbColor(SwordImbue.Blade(tier)), width);
+        var guard = new Vector2(4.2f * unit, 0f);
+        canvas.DrawLine(hand - guard, hand + guard, new Color("6e675c"), MathF.Max(2f, width * 0.7f));
+    }
+
+    private static Color RgbColor(Rgb color) =>
+        new(color.R / 255f, color.G / 255f, color.B / 255f);
+
     public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding, float scale = 1f, float flash = 0f, float alpha = 1f)
     {
         DrawActor(canvas, Art.Shooter, pos, face.X < -0.01f, winding, scale, flash, alpha);
