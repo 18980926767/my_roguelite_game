@@ -20,6 +20,7 @@ public sealed partial class ExploreView : Control
     private Vector2 _face = Vector2.Down;
     private Dir? _atDoor;
     private Rect2 _room;
+    private bool _exitsLit;
 
     public ExploreView(RunState run, FloorMap map, int x, int y, Action<Dir> enter, Action<Dir> peek)
     {
@@ -113,8 +114,16 @@ public sealed partial class ExploreView : Control
             Dir.West => new Vector2(_room.End.X - 70, _room.GetCenter().Y),
             _ => new Vector2(_room.Position.X + 70, _room.GetCenter().Y),
         };
+        _exitsLit = false;
+        _prompt.Text = "走到发亮的门口，再点窥视或进入。";
         RefreshHud();
         QueueRedraw();
+    }
+
+    public void CelebrateClear()
+    {
+        _exitsLit = true;
+        _prompt.Text = "房间清空。门口已经亮了，走过去再进入。";
     }
 
     public void SetPeek(string text) => _prompt.Text = text;
@@ -154,22 +163,10 @@ public sealed partial class ExploreView : Control
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            if (DoorRect(dir).Grow(18).HasPoint(_player))
+            if (Look.DoorRect(_room, dir).Grow(18).HasPoint(_player))
                 return dir;
         }
         return null;
-    }
-
-    private Rect2 DoorRect(Dir dir)
-    {
-        var center = _room.GetCenter();
-        return dir switch
-        {
-            Dir.North => new Rect2(center.X - 46, _room.Position.Y - 8, 92, 28),
-            Dir.South => new Rect2(center.X - 46, _room.End.Y - 20, 92, 28),
-            Dir.West => new Rect2(_room.Position.X - 8, center.Y - 46, 28, 92),
-            _ => new Rect2(_room.End.X - 20, center.Y - 46, 28, 92),
-        };
     }
 
     public override void _Draw()
@@ -181,7 +178,7 @@ public sealed partial class ExploreView : Control
         {
             if (_map.Step(_x, _y, dir) == null)
                 continue;
-            Look.DoorGap(this, DoorRect(dir), _atDoor == dir, _room);
+            Look.DoorGap(this, Look.DoorRect(_room, dir), _exitsLit || _atDoor == dir, _room);
         }
 
         Look.Person(this, _player, _face);

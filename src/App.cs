@@ -144,6 +144,12 @@ public partial class App : Control
             specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
             specs.Add((_rng.Next(2) == 0 ? EnemyCatalog.Bullet : EnemyCatalog.Dasher).AtThreat(threat));
         }
+        var exits = new List<Dir>();
+        foreach (var dir in new[] { Dir.North, Dir.East, Dir.South, Dir.West })
+        {
+            if (_map.Step(_x, _y, dir) != null)
+                exits.Add(dir);
+        }
         combat = new CombatView(_run, specs, _rng, (won, message) =>
         {
             Engine.TimeScale = 1;
@@ -158,12 +164,13 @@ public partial class App : Control
             cell.CombatCleared = true;
             _explore.Refresh();
             _explore.SetLog(message);
+            _explore.CelebrateClear();
             if (boss)
             {
                 _run.Won = true;
                 ShowEnd("通关", "守门的小 Boss 倒下了。这一版到此结束。");
             }
-        });
+        }, exits);
         AddChild(combat);
     }
 
