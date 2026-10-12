@@ -131,19 +131,20 @@ public class JuiceTests
     }
 
     [Fact]
-    public void Music_FadesDrumsInOnCombatAndOutAfterClear()
+    public void Music_CutsCombatInAfterSweepAndFadesOutAfterClear()
     {
         var mix = new MusicMix();
         Assert.True(mix.AmbientOn);
         Assert.Equal(0f, mix.Drums);
 
         mix.EnterCombat();
-        mix.Tick(0.25f);
-        Assert.Equal(0.5f, mix.Drums, 3);
-        mix.Tick(0.25f);
-        Assert.Equal(1f, mix.Drums, 3);
+        Assert.Equal(0f, mix.Drums);
+        mix.Tick(0.29f);
+        Assert.Equal(0f, mix.Drums);
+        mix.Tick(0.01f);
+        Assert.Equal(1f, mix.Drums);
         Assert.True(mix.AmbientOn);
-        Assert.Equal(0.5f, MusicMix.CombatFadeIn);
+        Assert.Equal(0.3f, MusicMix.CombatSweepSeconds);
 
         mix.LeaveCombat();
         mix.Tick(0.5f);
@@ -154,8 +155,10 @@ public class JuiceTests
         Assert.Equal(1f, MusicMix.ClearFadeOut);
 
         mix.EnterCombat();
-        mix.Tick(0.5f);
+        mix.Tick(0.1f);
         mix.ResetExplore();
+        Assert.Equal(0f, mix.Drums);
+        mix.Tick(0.3f);
         Assert.Equal(0f, mix.Drums);
         Assert.True(mix.AmbientOn);
     }
@@ -204,11 +207,15 @@ public class JuiceTests
 
         var ambient = WavFile.Read(Path.Combine(root, "audio", "music", "ambient.wav"));
         var drums = WavFile.Read(Path.Combine(root, "audio", "music", "drums.wav"));
+        var sweep = WavFile.Read(Path.Combine(root, "audio", "music", "combat_sweep.wav"));
         Assert.Equal(ambient.Samples, drums.Samples);
         Assert.Equal(846720, ambient.Samples);
         Assert.InRange(ambient.Seconds, 19.1f, 19.3f);
         Assert.True(ambient.Peak > 1000);
         Assert.True(drums.Peak > 1000);
+        Assert.Equal(13230, sweep.Samples);
+        Assert.InRange(sweep.Seconds, 0.29f, 0.31f);
+        Assert.True(sweep.Peak > 1000);
         Assert.True(File.Exists(Path.Combine(root, "tools", "gen_audio.py")));
     }
 
