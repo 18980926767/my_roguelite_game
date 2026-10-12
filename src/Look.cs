@@ -65,11 +65,13 @@ public static class Look
 
     public static void Sword(CanvasItem canvas, Vector2 pos, Vector2 face, int tier, float scale = 1f)
     {
-        var unit = ActorScale * Mathf.Max(0.05f, scale);
-        var flip = face.X < -0.01f ? -1f : 1f;
-        var hand = pos + new Vector2(5f * flip, 2f) * unit;
-        var tip = hand + new Vector2(2.2f * flip, -15f) * unit;
-        var width = MathF.Max(4f, 4f * scale);
+        var pixel = ActorScale * Mathf.Max(0.05f, scale);
+        var flip = face.X < -0.01f;
+        // Sprite pixels from the texture center. The grip sits on the body's side, and the blade points up.
+        // Facing left mirrors that offset the same way DrawActor mirrors the sprite.
+        var hand = pos + new Vector2(flip ? -5f : 5f, 2f) * pixel;
+        var tip = hand + new Vector2(flip ? -1.5f : 1.5f, -14f) * pixel;
+        var width = MathF.Max(4f, 3.5f * scale);
         if (SwordImbue.Glows(tier))
         {
             var glow = RgbColor(SwordImbue.Glow(tier));
@@ -77,7 +79,7 @@ public static class Look
             canvas.DrawLine(hand, tip, glow, width * 3.2f);
         }
         canvas.DrawLine(hand, tip, RgbColor(SwordImbue.Blade(tier)), width);
-        var guard = new Vector2(4.2f * unit, 0f);
+        var guard = new Vector2(3.2f * pixel, 0f);
         canvas.DrawLine(hand - guard, hand + guard, new Color("6e675c"), MathF.Max(2f, width * 0.7f));
     }
 
@@ -264,9 +266,9 @@ public static class Look
         var width = tex.GetWidth() * Scale * scale;
         var height = tex.GetHeight() * Scale * scale;
         var tint = winding ? new Color(1f, 0.88f, 0.55f, alpha) : new Color(1f, 1f, 1f, alpha);
-        var rect = flipX
-            ? new Rect2(pos.X + width / 2f, pos.Y - height / 2f, -width, height)
-            : new Rect2(pos.X - width / 2f, pos.Y - height / 2f, width, height);
+        // A negative width flips the texture, and Godot keeps the rect's left edge where it is.
+        // Start at the left edge either way so facing left mirrors in place instead of sliding a full body width.
+        var rect = new Rect2(pos.X - width / 2f, pos.Y - height / 2f, flipX ? -width : width, height);
         canvas.DrawTextureRect(tex, rect, false, tint);
         if (winding)
         {
