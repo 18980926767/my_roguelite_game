@@ -155,17 +155,94 @@ public sealed class ChoiceList
         button.ClipText = false;
         button.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
         button.Alignment = HorizontalAlignment.Left;
+        button.FocusMode = Control.FocusModeEnum.None;
         var text = picked && !label.Contains("[J]") ? $"{label}  [J]" : label;
         button.Text = picked ? $"▶ {text}" : text;
-        if (!button.HasMeta(InkMeta))
-            button.SetMeta(InkMeta, button.GetThemeColor("font_color"));
-        var ink = picked ? new Color("f9c22b") : button.GetMeta(InkMeta).AsColor();
-        button.AddThemeColorOverride("font_color", ink);
-        button.AddThemeColorOverride("font_hover_color", ink);
-        button.AddThemeColorOverride("font_pressed_color", ink);
-        button.AddThemeColorOverride("font_focus_color", ink);
-        button.Modulate = picked ? new Color(1.28f, 1.05f, 0.48f) : Colors.White;
+        button.Modulate = Colors.White;
+        Remember(button);
+        if (picked)
+            ApplyPicked(button);
+        else
+            ApplyIdle(button);
     }
 
-    private const string InkMeta = "choice_ink";
+    private static void Remember(Button button)
+    {
+        if (button.HasMeta(Remembered))
+            return;
+        button.SetMeta(Remembered, true);
+        foreach (var color in InkNames)
+            button.SetMeta(IdlePrefix + color, button.GetThemeColor(color));
+        foreach (var box in BoxNames)
+        {
+            var had = button.HasThemeStyleboxOverride(box);
+            button.SetMeta(HadPrefix + box, had);
+            if (had)
+                button.SetMeta(BoxPrefix + box, button.GetThemeStylebox(box));
+        }
+    }
+
+    private static void ApplyPicked(Button button)
+    {
+        var ink = new Color("fff6d0");
+        foreach (var color in InkNames)
+            button.AddThemeColorOverride(color, ink);
+        button.AddThemeColorOverride("font_outline_color", ink);
+        button.AddThemeConstantOverride("outline_size", 2);
+        foreach (var box in BoxNames)
+            button.AddThemeStyleboxOverride(box, PickedBox);
+    }
+
+    private static void ApplyIdle(Button button)
+    {
+        foreach (var color in InkNames)
+            button.AddThemeColorOverride(color, button.GetMeta(IdlePrefix + color).AsColor());
+        button.AddThemeConstantOverride("outline_size", 0);
+        foreach (var box in BoxNames)
+        {
+            if (button.GetMeta(HadPrefix + box, false).AsBool())
+                button.AddThemeStyleboxOverride(box, (StyleBox)button.GetMeta(BoxPrefix + box));
+            else
+                button.RemoveThemeStyleboxOverride(box);
+        }
+    }
+
+    private const string Remembered = "choice_idle";
+    private const string IdlePrefix = "idle_";
+    private const string HadPrefix = "had_";
+    private const string BoxPrefix = "box_";
+
+    private static readonly string[] InkNames =
+    {
+        "font_color",
+        "font_hover_color",
+        "font_pressed_color",
+        "font_focus_color",
+        "font_disabled_color",
+    };
+
+    private static readonly string[] BoxNames =
+    {
+        "normal",
+        "hover",
+        "pressed",
+        "hover_pressed",
+        "focus",
+        "disabled",
+    };
+
+    private static readonly StyleBoxFlat PickedBox = new()
+    {
+        BgColor = new Color("2a2018"),
+        BorderColor = new Color("f9c22b"),
+        BorderWidthLeft = 3,
+        BorderWidthTop = 3,
+        BorderWidthRight = 3,
+        BorderWidthBottom = 3,
+        ContentMarginLeft = 12,
+        ContentMarginTop = 6,
+        ContentMarginRight = 12,
+        ContentMarginBottom = 6,
+        AntiAliasing = false,
+    };
 }

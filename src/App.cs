@@ -14,11 +14,21 @@ public partial class App : Control
     private Control? _overlay;
     private readonly ChoiceList _choices = new();
     private Action? _cancel;
+    private int _stickFrames;
+    private int _stickIndex;
 
     public override void _Ready()
     {
         GetWindow().Title = "洞穴之咒";
         StartRun();
+    }
+
+    public override void _Process(double _)
+    {
+        if (_stickFrames <= 0 || _overlay == null)
+            return;
+        _choices.Index = _stickIndex;
+        _stickFrames--;
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -183,13 +193,16 @@ public partial class App : Control
                 _explore.Refresh();
             });
         }
-        var fight = AddChoice(box, boss ? "迎战小 Boss" : "开始战斗", () =>
+        var fightAt = _choices.Count;
+        AddChoice(box, boss ? "迎战小 Boss" : "开始战斗", () =>
         {
             CloseOverlay();
             StartCombat(cell, boss);
         });
         AddChoice(box, "先离开", CloseOverlay, cancel: true);
-        _choices.Select(fight);
+        _stickIndex = fightAt;
+        _stickFrames = 3;
+        _choices.Index = fightAt;
     }
 
     private void StartCombat(FloorCell cell, bool boss)
@@ -377,6 +390,7 @@ public partial class App : Control
         _overlay = null;
         _choices.Clear();
         _cancel = null;
+        _stickFrames = 0;
         if (IsInstanceValid(_explore) && _explore.Visible)
             _explore.AcceptKeys = true;
     }
