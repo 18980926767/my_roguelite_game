@@ -30,7 +30,21 @@ public sealed partial class CombatView : Control
         public float HitPunch;
         public float DeathLeft;
         public bool DeathPlayed;
+        public readonly List<SlashMark> Marks = new();
         public bool Alive => Hp > 0;
+    }
+
+    private sealed class SlashMark
+    {
+        public SlashStroke Stroke;
+        public bool Live = true;
+    }
+
+    private sealed class QueuedSwing
+    {
+        public int Foe;
+        public SlashMark Mark = null!;
+        public int Tier;
     }
 
     private sealed class Pop
@@ -57,6 +71,7 @@ public sealed partial class CombatView : Control
         public int Target;
         public int Slot;
         public string Text = "";
+        public QueuedSwing? Swing;
     }
 
     private readonly RunState _run;
@@ -90,6 +105,14 @@ public sealed partial class CombatView : Control
     private float _portraitLeft;
     private int _portraitFoe = -1;
     private bool _portraitSword;
+    private bool _portraitHasSwing;
+    private bool _portraitVoiced;
+    private int _portraitTier = 1;
+    private float _markAge;
+    private readonly List<QueuedSwing> _swings = new();
+    private readonly List<QueuedSwing> _cadence = new();
+    private int _cadenceAt;
+    private float _cadenceWait = -1f;
     private float _rankLeft;
     private float _rankFlash;
     private float _followSlash;
@@ -182,9 +205,11 @@ public sealed partial class CombatView : Control
         var dt = (float)delta;
         if (_iframe > 0)
             _iframe -= dt;
+        var real = RealSlice();
         TickJuice(MathF.Min(dt, 0.05f));
-        // Time-stop sets Engine.TimeScale to 0, so the cut-in advances on real time.
-        TickPortrait(RealSlice());
+        // Time-stop sets Engine.TimeScale to 0, so the cut-in and the scratch blink advance on real time.
+        TickPortrait(real);
+        _markAge += real;
 
         if (_clear.Running || _clear.Done)
         {
@@ -373,6 +398,9 @@ public sealed partial class CombatView : Control
         DrawPops();
         if (_clear.Running)
             DrawClearBanner();
+        if (_phase == Phase.Focus)
+            DrawFocusVeil();
+        DrawSlashMarks();
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
         DrawRank();
         DrawPortrait();
@@ -419,9 +447,12 @@ public sealed partial class CombatView : Control
         _ap = _run.ActionPoints;
         _queue.Clear();
         _followUps.Clear();
+        DropMarks();
         _aimBasic = true;
         _portraitLeft = 0f;
         _portraitFoe = -1;
+        _portraitHasSwing = false;
+        AudioManager.EnterFocus();
         _target = Nearest();
         RefreshAttackLabel();
         RefreshSlotButtons();
@@ -625,9 +656,16 @@ public sealed partial class CombatView : Control
         if (_portraitLeft > 0f || _ap <= 0 || index < 0)
             return;
         _ap--;
-        _queue.Add(new Plan { Kind = Act.Attack, Target = index, Text = $"普攻 {_foes[index].Spec.Name}" });
+        var swing = RememberSwing(index);
+        _queue.Add(new Plan
+        {
+            Kind = Act.Attack,
+            Target = index,
+            Text = $"普攻 {_foes[index].Spec.Name}",
+            Swing = swing,
+        });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
-        BeginPortrait(index);
+        BeginPortrait(index, swing);
         if (_ap <= 0)
             _choices.Index = CommitChoice;
     }
@@ -653,6 +691,8 @@ public sealed partial class CombatView : Control
         while (_queue.Count > 0)
             RefundLast();
         RefreshSlotButtons();
+        DropMarks();
+        AudioManager.LeaveFocus();
         Engine.TimeScale = 1;
         _phase = Phase.Realtime;
         SetFocusUi(false);
@@ -677,10 +717,19 @@ public sealed partial class CombatView : Control
 
     private void Commit()
     {
+        var landed = new List<QueuedSwing>();
         foreach (var plan in _queue)
         {
             if (plan.Kind == Act.Attack)
-                ResolveAttack(plan.Target);
+            {
+                var connected = ResolveAttack(plan.Target, plan.Swing != null);
+                if (plan.Swing == null)
+                    continue;
+                if (connected)
+                    landed.Add(plan.Swing);
+                else
+                    plan.Swing.Mark.Live = false;
+            }
             else if (plan.Kind == Act.Skill)
             {
                 var bonus = _run.ApplyRandomBonus(_rng);
@@ -692,6 +741,9 @@ public sealed partial class CombatView : Control
         }
         var extraPause = _ap >= 1;
         _queue.Clear();
+        _swings.Clear();
+        AudioManager.LeaveFocus();
+        BeginCadence(landed);
         Engine.TimeScale = 1;
         _charge = 0;
         SetFocusUi(false);
@@ -712,6 +764,109 @@ public sealed partial class CombatView : Control
         Note("行动点已经用完。时间直接恢复。");
     }
 
+    private QueuedSwing? RememberSwing(int index)
+    {
+        if (!IsSword(_run.ActiveWeapon) || index < 0 || index >= _foes.Count)
+            return null;
+        var tier = ActiveSwordTier();
+        var foe = _foes[index];
+        var mark = new SlashMark { Stroke = SlashMarks.Stroke(foe.Marks.Count, tier) };
+        foe.Marks.Add(mark);
+        var swing = new QueuedSwing { Foe = index, Mark = mark, Tier = tier };
+        _swings.Add(swing);
+        return swing;
+    }
+
+    private void DropMarks()
+    {
+        foreach (var foe in _foes)
+            foe.Marks.Clear();
+        _swings.Clear();
+        _cadence.Clear();
+        _cadenceAt = 0;
+        _cadenceWait = -1f;
+    }
+
+    private void BeginCadence(List<QueuedSwing> landed)
+    {
+        _cadence.Clear();
+        _cadence.AddRange(landed);
+        _cadenceAt = 0;
+        _cadenceWait = -1f;
+        if (_cadence.Count == 0)
+            return;
+        FireCadence();
+    }
+
+    private void TickCadence(float dt)
+    {
+        if (_cadenceWait < 0f)
+            return;
+        if (dt < 0f)
+            dt = 0f;
+        _cadenceWait -= dt;
+        if (_cadenceWait <= 0f)
+            FireCadence();
+    }
+
+    private void FireCadence()
+    {
+        if (_cadenceAt < 0 || _cadenceAt >= _cadence.Count)
+        {
+            _cadenceWait = -1f;
+            return;
+        }
+        var swing = _cadence[_cadenceAt];
+        var index = _cadenceAt;
+        _cadenceAt++;
+        swing.Mark.Live = false;
+        if (swing.Foe >= 0 && swing.Foe < _foes.Count)
+        {
+            var foe = _foes[swing.Foe];
+            var rad = swing.Mark.Stroke.AngleDegrees * (MathF.PI / 180f);
+            var dir = new Vector2(MathF.Cos(rad), MathF.Sin(rad));
+            _fx.Hit(foe.Pos, dir, _rng, SlashMarks.BurstCount(index));
+        }
+        var last = HitCadence.IsFinisher(index, _cadence.Count);
+        var cue = last ? SfxCue.HitHeavy : SfxCue.Hit;
+        var boost = last ? HitCadence.FinisherBoostDb : 0f;
+        AudioManager.PlayAt(cue, HitCadence.Pitch(index), boost);
+        _cadenceWait = _cadenceAt < _cadence.Count ? HitCadence.GapSeconds : -1f;
+    }
+
+    private void DrawFocusVeil()
+    {
+        const float pad = 64f;
+        DrawRect(new Rect2(-pad, -pad, Size.X + pad * 2f, Size.Y + pad * 2f), new Color(0.12f, 0.12f, 0.13f, 0.5f));
+    }
+
+    private void DrawSlashMarks()
+    {
+        var blink = SlashMarks.Flashing(_markAge);
+        foreach (var foe in _foes)
+        {
+            foreach (var mark in foe.Marks)
+            {
+                if (!mark.Live)
+                    continue;
+                var stroke = mark.Stroke;
+                var rad = stroke.AngleDegrees * (MathF.PI / 180f);
+                var dir = new Vector2(MathF.Cos(rad), MathF.Sin(rad));
+                var half = stroke.Length * 0.5f;
+                var from = Pixel(foe.Pos - dir * half);
+                var to = Pixel(foe.Pos + dir * half);
+                var ink = RgbOf(SlashMarks.Ink(stroke.Tier));
+                if (blink)
+                    ink = ink.Lerp(Colors.White, 0.45f);
+                if (SlashMarks.WhiteEdge(stroke.Tier))
+                    DrawLine(from, to, Colors.White, 3f, false);
+                DrawLine(from, to, ink, SlashMarks.LineWidth, false);
+            }
+        }
+    }
+
+    private static Vector2 Pixel(Vector2 point) => new(Mathf.Round(point.X), Mathf.Round(point.Y));
+
     private void ReleaseFreeze()
     {
         foreach (var foe in _foes)
@@ -723,13 +878,14 @@ public sealed partial class CombatView : Control
         }
     }
 
-    private void ResolveAttack(int index)
+    private bool ResolveAttack(int index, bool deferHit)
     {
         if (index < 0 || index >= _foes.Count || !_foes[index].Alive)
         {
             Note("这一下没打到人。");
-            AudioManager.Play(SfxCue.Swing);
-            return;
+            if (!deferHit)
+                AudioManager.Play(SfxCue.Swing);
+            return false;
         }
         var foe = _foes[index];
         var weapon = _run.ActiveWeapon;
@@ -748,13 +904,14 @@ public sealed partial class CombatView : Control
         var knock = "";
         if (weapon != null && weapon.KnockbackStacks > 0)
             knock = ApplyKnockback(foe, weapon.KnockbackStacks);
-        PresentFoeHit(foe, damage, new Color("ffe08a"), heavy: true);
+        PresentFoeHit(foe, damage, new Color("ffe08a"), heavy: true, muteHit: deferHit);
         Note($"砍中 {foe.Spec.Name}，伤害 {damage}。{knock}");
         if (!SwordImbue.FollowsUp(tier) || !foe.Alive)
-            return;
+            return true;
         _followUps.Add(new FollowUp { Index = index, Ratio = SwordImbue.FollowUpRatio(mult) });
         if (_hitStop <= 0f)
             ReleaseFollowUp();
+        return true;
     }
 
     private void ReleaseFollowUp()
@@ -1107,6 +1264,7 @@ public sealed partial class CombatView : Control
 
     private void TickJuice(float dt)
     {
+        TickCadence(dt);
         _shake = MathF.Max(0f, _shake - dt * 28f);
         _hurtFlash = MathF.Max(0f, _hurtFlash - dt);
         _swing = MathF.Max(0f, _swing - dt);
@@ -1160,7 +1318,7 @@ public sealed partial class CombatView : Control
         End(true, $"房间清空。获得 {gold} 金币。{extra}");
     }
 
-    private void PresentFoeHit(Foe foe, int amount, Color color, bool heavy)
+    private void PresentFoeHit(Foe foe, int amount, Color color, bool heavy, bool muteHit = false)
     {
         foe.HitFlash = MathF.Max(foe.HitFlash, heavy ? CombatFeel.HitFlashSeconds : CombatFeel.HitFlashSeconds * 0.45f);
         if (heavy)
@@ -1171,7 +1329,8 @@ public sealed partial class CombatView : Control
         {
             var dir = foe.Pos - _player;
             _fx.Hit(foe.Pos, dir, _rng);
-            AudioManager.Play(SfxCue.Hit);
+            if (!muteHit)
+                AudioManager.Play(SfxCue.Hit);
         }
         if (foe.Hp <= 0 && !foe.DeathPlayed)
         {
@@ -1305,10 +1464,13 @@ public sealed partial class CombatView : Control
     private static bool IsSword(WeaponState? weapon) =>
         weapon != null && (weapon.IsOrdinarySword || weapon.Name.Contains('剑'));
 
-    private void BeginPortrait(int index)
+    private void BeginPortrait(int index, QueuedSwing? swing)
     {
         _portraitFoe = index;
         _portraitSword = IsSword(_run.ActiveWeapon);
+        _portraitHasSwing = swing != null;
+        _portraitTier = swing?.Tier ?? ActiveSwordTier();
+        _portraitVoiced = false;
         _portraitLeft = PortraitSeconds;
         _actions.Visible = false;
         if (_slots != null)
@@ -1326,6 +1488,15 @@ public sealed partial class CombatView : Control
         if (_portraitLeft <= 0f)
             return;
         _portraitLeft = MathF.Max(0f, _portraitLeft - realDt);
+        if (!_portraitVoiced && _portraitHasSwing)
+        {
+            var shown = 1f - Mathf.Clamp(_portraitLeft / PortraitSeconds, 0f, 1f);
+            if (shown >= 0.06f)
+            {
+                _portraitVoiced = true;
+                AudioManager.Play(CueBank.SwingFor(_portraitTier));
+            }
+        }
         if (_portraitLeft > 0f)
             return;
         _portraitFoe = -1;
