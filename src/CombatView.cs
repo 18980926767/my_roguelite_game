@@ -1105,7 +1105,7 @@ public sealed partial class CombatView : Control
         Look.Person(this, left, Vector2.Right, CutInScale(Art.Player, size.Y) * pop);
         DrawPortraitFoe(foe, right, CutInScale(PortraitTex(foe), size.Y) * pop * (1f + hit * 0.05f), hit);
         if (_portraitSword)
-            DrawSwordFan(size, t);
+            DrawSwordTrail(size, t);
         DrawString(UiKit.Font, new Vector2(size.X * 0.08f, 72f), "你", fontSize: 28, modulate: new Color("f7f3ea"));
         DrawString(UiKit.Font, new Vector2(size.X * 0.58f, 72f), foe.Spec.Name, fontSize: 28, modulate: new Color("f7f3ea"));
     }
@@ -1138,33 +1138,69 @@ public sealed partial class CombatView : Control
             Look.Shooter(this, pos, face, false, scale, flash);
     }
 
-    private void DrawSwordFan(Vector2 size, float t)
+    private void DrawSwordTrail(Vector2 size, float t)
     {
-        var life = Mathf.Clamp((t - 0.06f) / 0.72f, 0f, 1f);
-        if (life <= 0.001f)
+        var travel = Mathf.Clamp((t - 0.06f) / 0.34f, 0f, 1f);
+        if (travel <= 0.001f)
             return;
-        var fade = life < 0.7f ? Mathf.Clamp(life * 2.6f, 0f, 1f) : (1f - life) / 0.3f;
-        var origin = new Vector2(size.X * 0.40f, size.Y * 0.52f);
-        var spread = Mathf.Lerp(0.16f, 1.08f, 1f - MathF.Pow(1f - life, 2f));
-        var radius = size.Y * Mathf.Lerp(0.2f, 0.56f, 1f - MathF.Pow(1f - Mathf.Clamp(life * 1.25f, 0f, 1f), 2f));
-        const int steps = 18;
-        var pts = new Vector2[steps + 2];
-        var cols = new Color[steps + 2];
-        pts[0] = origin;
-        cols[0] = new Color(1f, 1f, 1f, 0.08f * fade);
-        for (var i = 0; i <= steps; i++)
+        var head = 1f - MathF.Pow(1f - travel, 1.65f);
+        var dissolve = Mathf.Clamp((t - 0.42f) / 0.2f, 0f, 1f);
+        var fade = 1f - dissolve;
+        var tailLead = dissolve * 0.42f;
+        DrawSlashRibbon(size, head - 0.14f, 0.36f, tailLead, fade * 0.22f, 0.72f, core: false);
+        DrawSlashRibbon(size, head - 0.07f, 0.38f, tailLead, fade * 0.48f, 0.86f, core: false);
+        DrawSlashRibbon(size, head, 0.4f, tailLead, fade, 1f, core: true);
+    }
+
+    private void DrawSlashRibbon(Vector2 size, float head, float length, float tailLead, float alpha, float widthMul, bool core)
+    {
+        if (alpha <= 0.02f)
+            return;
+        var tail = head - length + tailLead;
+        var from = MathF.Max(0f, tail);
+        var to = MathF.Min(1f, head);
+        if (to - from < 0.02f)
+            return;
+        const int steps = 14;
+        var count = steps + 1;
+        var pts = new Vector2[count * 2];
+        var cols = new Color[count * 2];
+        var spine = core ? new Vector2[count] : null;
+        var span = MathF.Max(0.001f, head - tail);
+        for (var i = 0; i < count; i++)
         {
-            var along = i / (float)steps;
-            var ang = -spread + spread * 2f * along;
-            pts[i + 1] = origin + new Vector2(MathF.Cos(ang), MathF.Sin(ang)) * radius;
-            var rim = 0.45f + 0.55f * (1f - MathF.Abs(along - 0.5f) * 1.4f);
-            cols[i + 1] = new Color(1f, 1f, 1f, Mathf.Clamp(rim, 0.2f, 1f) * fade);
+            var local = i / (float)steps;
+            var u = Mathf.Lerp(from, to, local);
+            var along = Mathf.Clamp((u - tail) / span, 0f, 1f);
+            SlashSample(size, u, out var pos, out var normal);
+            var width = MathF.Sin(along * MathF.PI) * size.Y * 0.05f * widthMul;
+            pts[i] = pos + normal * width;
+            pts[count * 2 - 1 - i] = pos - normal * width;
+            var ink = alpha * Mathf.Lerp(0.04f, 1f, along);
+            cols[i] = new Color(1f, 1f, 1f, ink);
+            cols[count * 2 - 1 - i] = new Color(1f, 1f, 1f, ink * 0.75f);
+            if (spine != null)
+                spine[i] = pos;
         }
         DrawPolygon(pts, cols);
-        var ink = new Color(1f, 1f, 1f, 0.95f * fade);
-        DrawLine(origin, pts[1], ink, 5f);
-        DrawLine(origin, pts[^1], ink, 5f);
-        DrawArc(origin, radius, -spread, spread, 28, ink, 7f, true);
+        if (spine == null)
+            return;
+        DrawPolyline(spine, new Color(1f, 1f, 1f, alpha), MathF.Max(2f, size.Y * 0.008f), true);
+    }
+
+    private static void SlashSample(Vector2 size, float u, out Vector2 pos, out Vector2 normal)
+    {
+        var a = new Vector2(size.X * 0.30f, size.Y * 0.14f);
+        var b = new Vector2(size.X * 0.68f, size.Y * 0.20f);
+        var c = new Vector2(size.X * 0.74f, size.Y * 0.84f);
+        var ab = a.Lerp(b, u);
+        var bc = b.Lerp(c, u);
+        pos = ab.Lerp(bc, u);
+        var tangent = (b - a) * (1f - u) + (c - b) * u;
+        if (tangent.LengthSquared() < 0.001f)
+            tangent = Vector2.Down;
+        tangent = tangent.Normalized();
+        normal = new Vector2(-tangent.Y, tangent.X);
     }
 
     private void Note(string text)
