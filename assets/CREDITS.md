@@ -10,3 +10,11 @@
 | Kenney Pixel UI Pack | 顶栏、弹窗和按钮的九宫格 | `kenney/pixel-ui/License.txt` |
 
 子弹和小地图仍是纯色。Kenney Tiny Dungeon 和 Monster Builder 还留在仓库里，房间和怪物已经不用它们。
+
+音效和两层背景音乐是仓库里的 `tools/gen_audio.py` 自己合成的，方波加噪声，风格接近 sfxr。没有拿 Kenney 或其他人的采样。Kenney 的 CC0 音效包是单次音效和短旋律，拆不成「一直响的氛围」和「进战斗才进来的鼓」这两层，所以音乐用这段原创循环当占位。可以随便用，也可以再跑一遍脚本重新生成：
+
+```bash
+python3 tools/gen_audio.py
+```
+
+特效颜色从 [Resurrect 64](https://lospec.com/palette-list/resurrect-64)（Kerrie Lake）里取了大约 16 个偏暗的颜色。调色板本身的许可随 Lospec 页面；这里只用了色值，没有用别人的图。

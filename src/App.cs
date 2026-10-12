@@ -74,6 +74,7 @@ public partial class App : Control
     private void StartRun()
     {
         Engine.TimeScale = 1;
+        AudioManager.ResetExplore();
         _run = RunState.CreateNew();
         _map = FloorGenerator.Generate(_rng);
         _x = _map.SpawnX;
@@ -117,6 +118,7 @@ public partial class App : Control
         _y = step.Value.Y;
         var cell = _map.At(_x, _y);
         cell.Visited = true;
+        AudioManager.Play(SfxCue.Door);
         _explore.EnterFrom(_x, _y, dir);
         Enter(cell);
     }
@@ -188,6 +190,7 @@ public partial class App : Control
     {
         _explore.Visible = false;
         _explore.AcceptKeys = false;
+        AudioManager.EnterCombat();
         CombatView? combat = null;
         var specs = new List<EnemySpec>();
         if (boss)
@@ -253,6 +256,7 @@ public partial class App : Control
                     {
                         if (ShopCatalog.TryBuy(_run, cell, captured.Id, out var note))
                         {
+                            AudioManager.Play(SfxCue.Pickup);
                             _explore.Refresh();
                             _explore.SetLog(note);
                             CloseOverlay();
@@ -303,6 +307,8 @@ public partial class App : Control
             AddChoice(box, captured.Label, () =>
             {
                 var result = captured.Apply(_run, _rng);
+                if (result.Contains("获得"))
+                    AudioManager.Play(SfxCue.Pickup);
                 if (result.Contains("箱子没有开"))
                 {
                     _explore.SetLog(result);
