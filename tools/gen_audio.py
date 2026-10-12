@@ -12,8 +12,11 @@ Run from the repo root:
 
 Output:
     audio/sfx/<cue>-<n>.wav     two or three variants of each cue
-    audio/music/ambient.wav     loop that always plays
-    audio/music/drums.wav       same length, silent until a fight starts
+    audio/music/ambient.wav     bass + arpeggio, always playing
+    audio/music/drums.wav       melody + drums, same length, fades in during a fight
+
+The piece is D minor, 100 BPM, 4/4, eight bars (19.2 s). Chords last two bars
+each: Dm, B-flat, F, C. Both files share one sample grid so they stay in time.
 """
 
 from __future__ import annotations
@@ -213,63 +216,149 @@ CUES = {
 }
 
 
-def loop_square(freq: float, samples: int, duty: float = 0.5) -> list[float]:
-    # Snap to a frequency that completes a whole number of cycles in the loop.
-    cycles = max(1, round(freq * samples / SR))
-    hz = cycles * SR / samples
-    out = [0.0] * samples
-    for index in range(samples):
-        phase = (index * hz / SR) % 1.0
-        out[index] = 1.0 if phase < duty else -1.0
+# D minor, 100 BPM, 4/4. Eight bars is exactly 19.2 s at 44100 Hz.
+BPM = 100
+BEAT = SR * 60 // BPM
+LOOP_BEATS = 8 * 4
+LOOP_SAMPLES = LOOP_BEATS * BEAT
+
+# The written melody is eight quarter notes. That fills two bars, so the first
+# line is played twice across the first four bars. The second line fills bars
+# 5–6, then D is held for the last two bars so the loop comes home.
+MELODY_A = ("A4", "C5", "D5", "C5", "A4", "F4", "G4", "A4")
+MELODY_B = ("F4", "G4", "A4", "C5", "Bb4", "A4", "G4", "E4")
+
+CHORDS = (
+    # root, fifth, arp: root, third, fifth, third
+    ("Dm", "D2", "A2", ("D4", "F4", "A4", "F4")),
+    ("Bb", "Bb2", "F3", ("Bb4", "D5", "F5", "D5")),
+    ("F", "F2", "C3", ("F4", "A4", "C5", "A4")),
+    ("C", "C2", "G2", ("C4", "E4", "G4", "E4")),
+)
+
+
+def note_hz(name: str) -> float:
+    pitch = {
+        "C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11,
+    }
+    accidental = 0
+    index = 1
+    if name[1:2] in ("b", "#"):
+        accidental = -1 if name[1] == "b" else 1
+        index = 2
+    octave = int(name[index:])
+    midi = (octave + 1) * 12 + pitch[name[0]] + accidental
+    return 440.0 * 2.0 ** ((midi - 69) / 12.0)
+
+
+def triangle(phase: float) -> float:
+    if phase < 0.25:
+        return phase / 0.25
+    if phase < 0.75:
+        return 1.0 - (phase - 0.25) / 0.25
+    return -1.0 + (phase - 0.75) / 0.25
+
+
+def voice(kind: str, freq: float, count: int, gain: float, duty: float = 0.5, decay_s: float | None = None) -> list[float]:
+    """A note that starts and ends near zero so the loop has no click."""
+    cycles = max(1, round(freq * count / SR))
+    out = [0.0] * count
+    attack = min(48, max(1, count // 10))
+    release = min(64, max(1, count // 8))
+    for index in range(count):
+        phase = (index * cycles / count) % 1.0
+        if kind == "tri":
+            sample = triangle(phase)
+        else:
+            raw = 1.0 if phase < duty else -1.0
+            mean = duty * 2.0 - 1.0
+            peak = max(abs(1.0 - mean), abs(-1.0 - mean), 1e-6)
+            sample = (raw - mean) / peak
+        if decay_s:
+            sample *= math.exp(-index / (decay_s * SR))
+        if index < attack:
+            sample *= index / attack
+        if index >= count - release:
+            sample *= (count - 1 - index) / release
+        out[index] = sample * gain
     return out
 
 
+def melody_events() -> list[tuple[str, int]]:
+    events = [(name, 1) for name in MELODY_A] * 2
+    events.extend((name, 1) for name in MELODY_B)
+    events.append(("D4", 8))
+    return events
+
+
 def ambient_loop() -> list[float]:
-    samples = SR * 10
-    drone = scale(loop_square(73.4, samples, 0.5), 0.16)
-    fifth = scale(loop_square(110.0, samples, 0.25), 0.06)
-    body = lowpass([a + b for a, b in zip(drone, fifth)], 420)
-    # A slow minor color on every other bar, still an integer number of cycles.
-    pulse = scale(loop_square(220.0, samples, 0.5), 0.05)
-    beat = int(SR * 0.625)
-    for index in range(samples):
-        bar_pos = (index % (beat * 8)) / (beat * 8)
-        if 0.0 <= bar_pos < 0.45:
-            body[index] += pulse[index]
-    return crush([sample * 0.85 for sample in body], 6)
+    out = [0.0] * LOOP_SAMPLES
+    eighth = BEAT // 2
+    sixteenth = BEAT // 4
+    for chord_index, (_label, root, fifth, arp) in enumerate(CHORDS):
+        origin = chord_index * 8 * BEAT
+        bass_cycle = (root, root, fifth, root)
+        for step in range(16):
+            mix_into(out, voice("tri", note_hz(bass_cycle[step % 4]), eighth, 0.42, decay_s=0.16), origin + step * eighth)
+        for step in range(32):
+            mix_into(out, voice("pulse", note_hz(arp[step % 4]), sixteenth, 0.12, duty=0.25, decay_s=0.05), origin + step * sixteenth)
+    return out
 
 
-def drums_loop() -> list[float]:
-    samples = SR * 10
-    out = [0.0] * samples
-    beat = int(SR * 0.625)
-    rng = random.Random(7)
-    for step in range(16):
-        at = step * beat
-        if step % 2 == 0:
-            kick = decay(square(150, 0.12, slide=-0.82), 0.05)
-            mix_into(out, scale(kick, 0.85), at)
-        else:
-            snare = decay(noise(0.12, rng), 0.04)
-            snare = lowpass(snare, 3200)
-            mix_into(out, scale(snare, 0.45), at)
-        hat = decay(noise(0.04, rng), 0.012)
-        hat = [sample - hat[max(0, i - 1)] for i, sample in enumerate(hat)]
-        mix_into(out, scale(hat, 0.18), at)
-        mix_into(out, scale(hat, 0.1), at + beat // 2)
-    # Keep the loop point quiet so the next kick is the downbeat.
-    tail = int(SR * 0.02)
-    for index in range(tail):
-        out[-1 - index] *= index / tail
-    return crush(out, 5)
+def kick_hit() -> list[float]:
+    count = int(SR * 0.08)
+    out = [0.0] * count
+    phase = 0.0
+    for index in range(count):
+        frac = index / count
+        freq = 160.0 + (46.0 - 160.0) * frac
+        phase += freq / SR
+        amp = math.exp(-index / (0.022 * SR))
+        if index < 16:
+            amp *= index / 16
+        out[index] = math.sin(2.0 * math.pi * phase) * amp * 0.55
+    return out
+
+
+def snare_hit() -> list[float]:
+    count = int(SR * 0.09)
+    rng = random.Random(11)
+    burst = [rng.uniform(-1.0, 1.0) for _ in range(count)]
+    burst = lowpass(burst, 3200)
+    burst = [burst[index] - (burst[index - 1] if index else 0.0) for index in range(count)]
+    out = [0.0] * count
+    for index, sample in enumerate(burst):
+        amp = math.exp(-index / (0.02 * SR))
+        if index < 8:
+            amp *= index / 8
+        out[index] = sample * amp * 0.28
+    return out
+
+
+def combat_loop() -> list[float]:
+    """Melody plus kick on beats 1 and 3, noise snare on beats 2 and 4."""
+    out = [0.0] * LOOP_SAMPLES
+    at = 0
+    for name, beats in melody_events():
+        count = beats * BEAT
+        mix_into(out, voice("square", note_hz(name), count, 0.30, duty=0.5), at)
+        at += count
+    kick = kick_hit()
+    snare = snare_hit()
+    for beat in range(LOOP_BEATS):
+        hit = kick if beat % 2 == 0 else snare
+        mix_into(out, hit, beat * BEAT)
+    return out
 
 
 def main() -> None:
     for name, build in CUES.items():
         for variant in (1, 2, 3):
             write_wav(SFX / f"{name}-{variant}.wav", build(variant))
+    if sum(beats for _name, beats in melody_events()) != LOOP_BEATS:
+        raise SystemExit("melody does not fill the 8-bar loop")
     write_wav(MUSIC / "ambient.wav", ambient_loop())
-    write_wav(MUSIC / "drums.wav", drums_loop())
+    write_wav(MUSIC / "drums.wav", combat_loop())
     print(f"wrote sfx to {SFX}")
     print(f"wrote music to {MUSIC}")
 

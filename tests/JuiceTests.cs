@@ -205,7 +205,8 @@ public class JuiceTests
         var ambient = WavFile.Read(Path.Combine(root, "audio", "music", "ambient.wav"));
         var drums = WavFile.Read(Path.Combine(root, "audio", "music", "drums.wav"));
         Assert.Equal(ambient.Samples, drums.Samples);
-        Assert.InRange(ambient.Seconds, 8f, 12f);
+        Assert.Equal(846720, ambient.Samples);
+        Assert.InRange(ambient.Seconds, 19.1f, 19.3f);
         Assert.True(ambient.Peak > 1000);
         Assert.True(drums.Peak > 1000);
         Assert.True(File.Exists(Path.Combine(root, "tools", "gen_audio.py")));
