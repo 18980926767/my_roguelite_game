@@ -84,6 +84,11 @@ public sealed partial class CombatView : Control
     private readonly ClearBeat _clear = new();
     private readonly List<Pop> _pops = new();
     private readonly Dir[] _exits;
+    private const float PortraitSeconds = 0.46f;
+    private float _portraitLeft;
+    private int _portraitFoe = -1;
+    private bool _portraitSword;
+    private ulong _realClock;
     private Label _hud = null!;
     private Label _logLabel = null!;
     private GridContainer _actions = null!;
@@ -156,6 +161,8 @@ public sealed partial class CombatView : Control
         if (_iframe > 0)
             _iframe -= dt;
         TickJuice(MathF.Min(dt, 0.05f));
+        // Time-stop sets Engine.TimeScale to 0, so the cut-in advances on real time.
+        TickPortrait(RealSlice());
 
         if (_clear.Running)
         {
@@ -293,6 +300,8 @@ public sealed partial class CombatView : Control
         DrawPops();
         if (_clear.Running)
             DrawClearBanner();
+        DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        DrawPortrait();
     }
 
     private bool ShowingStrikePreview()
@@ -328,6 +337,8 @@ public sealed partial class CombatView : Control
         _ap = _run.ActionPoints;
         _queue.Clear();
         _aimBasic = true;
+        _portraitLeft = 0f;
+        _portraitFoe = -1;
         var nearest = Nearest();
         _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
         RefreshSlotButtons();
@@ -344,7 +355,6 @@ public sealed partial class CombatView : Control
             QueueAttack(Nearest());
         });
         AddAction("物品", ToggleItems);
-        AddAction("撤销上一步", Undo);
         AddAction("跳过并结算", Commit);
         _itemBar = new VBoxContainer();
         _actions.AddChild(_itemBar);
@@ -494,11 +504,12 @@ public sealed partial class CombatView : Control
 
     private void QueueAttack(int index)
     {
-        if (_ap <= 0 || index < 0)
+        if (_portraitLeft > 0f || _ap <= 0 || index < 0)
             return;
         _ap--;
         _queue.Add(new Plan { Kind = Act.Attack, Target = index, Text = $"普攻 {_foes[index].Spec.Name}" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
+        BeginPortrait(index);
     }
 
     private void QueueSkill()
@@ -513,25 +524,6 @@ public sealed partial class CombatView : Control
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
-    }
-
-    private void Undo()
-    {
-        if (_queue.Count == 0)
-            return;
-        var last = _queue[^1];
-        _queue.RemoveAt(_queue.Count - 1);
-        if (last.Kind is Act.Attack or Act.Skill)
-            _ap++;
-        if (last.Kind == Act.Swap)
-            _run.ActiveSlot = last.Slot;
-        RefreshSlotButtons();
-        if (last.Kind == Act.Skill)
-        {
-            _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
-            _run.SkillCooldown = 0;
-        }
-        Note(_queue.Count == 0 ? "队列空了。" : string.Join(" → ", _queue.Select(item => item.Text)));
     }
 
     private void Commit()
@@ -1048,6 +1040,132 @@ public sealed partial class CombatView : Control
     }
 
     private static float Unit(float left, float span) => span <= 0f ? 0f : Mathf.Clamp(left / span, 0f, 1f);
+
+    private float RealSlice()
+    {
+        var now = Time.GetTicksMsec();
+        if (_realClock == 0)
+        {
+            _realClock = now;
+            return 0f;
+        }
+        var step = MathF.Min(0.05f, (now - _realClock) / 1000f);
+        _realClock = now;
+        return step;
+    }
+
+    private static bool IsSword(WeaponState? weapon) =>
+        weapon != null && (weapon.IsOrdinarySword || weapon.Name.Contains('剑'));
+
+    private void BeginPortrait(int index)
+    {
+        _portraitFoe = index;
+        _portraitSword = IsSword(_run.ActiveWeapon);
+        _portraitLeft = PortraitSeconds;
+        _actions.Visible = false;
+        if (_slots != null)
+            _slots.Visible = false;
+        if (_itemBar != null)
+        {
+            _itemsOpen = false;
+            _itemBar.Visible = false;
+        }
+        QueueRedraw();
+    }
+
+    private void TickPortrait(float realDt)
+    {
+        if (_portraitLeft <= 0f)
+            return;
+        _portraitLeft = MathF.Max(0f, _portraitLeft - realDt);
+        if (_portraitLeft > 0f)
+            return;
+        _portraitFoe = -1;
+        if (_phase != Phase.Focus)
+            return;
+        _actions.Visible = true;
+        if (_slots != null)
+            _slots.Visible = true;
+    }
+
+    private void DrawPortrait()
+    {
+        if (_portraitLeft <= 0f || _portraitFoe < 0 || _portraitFoe >= _foes.Count)
+            return;
+        var foe = _foes[_portraitFoe];
+        var t = 1f - Mathf.Clamp(_portraitLeft / PortraitSeconds, 0f, 1f);
+        var size = Size.X < 32f ? GetViewportRect().Size : Size;
+        var intro = Mathf.Clamp(t / 0.16f, 0f, 1f);
+        var pop = Mathf.Lerp(0.74f, 1f, intro);
+        var hit = Mathf.Clamp((t - 0.14f) / 0.16f, 0f, 1f) * Mathf.Clamp((0.9f - t) / 0.34f, 0f, 1f);
+        var tremble = new Vector2(MathF.Sin(t * 72f) * 18f, MathF.Cos(t * 57f) * 8f) * hit;
+        DrawRect(new Rect2(Vector2.Zero, size), new Color(0.05f, 0.04f, 0.06f, 0.94f));
+        var left = new Vector2(size.X * 0.25f, size.Y * 0.58f);
+        var right = new Vector2(size.X * 0.75f, size.Y * 0.56f) + tremble;
+        Look.Person(this, left, Vector2.Right, CutInScale(Art.Player, size.Y) * pop);
+        DrawPortraitFoe(foe, right, CutInScale(PortraitTex(foe), size.Y) * pop * (1f + hit * 0.05f), hit);
+        if (_portraitSword)
+            DrawSwordFan(size, t);
+        DrawString(UiKit.Font, new Vector2(size.X * 0.08f, 72f), "你", fontSize: 28, modulate: new Color("f7f3ea"));
+        DrawString(UiKit.Font, new Vector2(size.X * 0.58f, 72f), foe.Spec.Name, fontSize: 28, modulate: new Color("f7f3ea"));
+    }
+
+    private static Texture2D PortraitTex(Foe foe)
+    {
+        if (foe.Spec.MaxHp > 80)
+            return Art.Boss;
+        if (foe.Spec.Dashes && !foe.Spec.Shoots)
+            return Art.Dasher;
+        return Art.Shooter;
+    }
+
+    private static float CutInScale(Texture2D tex, float viewH)
+    {
+        var baseH = MathF.Max(1f, tex.GetHeight() * Look.ActorScale);
+        return Mathf.Clamp(viewH * 0.62f / baseH, 2.8f, 9f);
+    }
+
+    private void DrawPortraitFoe(Foe foe, Vector2 pos, float scale, float flash)
+    {
+        var face = Vector2.Left;
+        var boss = foe.Spec.MaxHp > 80;
+        var dasher = foe.Spec.Dashes && !foe.Spec.Shoots;
+        if (boss)
+            Look.Boss(this, pos, face, false, scale, flash);
+        else if (dasher)
+            Look.Dasher(this, pos, face, false, scale, flash);
+        else
+            Look.Shooter(this, pos, face, false, scale, flash);
+    }
+
+    private void DrawSwordFan(Vector2 size, float t)
+    {
+        var life = Mathf.Clamp((t - 0.06f) / 0.72f, 0f, 1f);
+        if (life <= 0.001f)
+            return;
+        var fade = life < 0.7f ? Mathf.Clamp(life * 2.6f, 0f, 1f) : (1f - life) / 0.3f;
+        var origin = new Vector2(size.X * 0.40f, size.Y * 0.52f);
+        var spread = Mathf.Lerp(0.16f, 1.08f, 1f - MathF.Pow(1f - life, 2f));
+        var radius = size.Y * Mathf.Lerp(0.2f, 0.56f, 1f - MathF.Pow(1f - Mathf.Clamp(life * 1.25f, 0f, 1f), 2f));
+        const int steps = 18;
+        var pts = new Vector2[steps + 2];
+        var cols = new Color[steps + 2];
+        pts[0] = origin;
+        cols[0] = new Color(1f, 1f, 1f, 0.08f * fade);
+        for (var i = 0; i <= steps; i++)
+        {
+            var along = i / (float)steps;
+            var ang = -spread + spread * 2f * along;
+            pts[i + 1] = origin + new Vector2(MathF.Cos(ang), MathF.Sin(ang)) * radius;
+            var rim = 0.45f + 0.55f * (1f - MathF.Abs(along - 0.5f) * 1.4f);
+            cols[i + 1] = new Color(1f, 1f, 1f, Mathf.Clamp(rim, 0.2f, 1f) * fade);
+        }
+        DrawPolygon(pts, cols);
+        var ink = new Color(1f, 1f, 1f, 0.95f * fade);
+        DrawLine(origin, pts[1], ink, 5f);
+        DrawLine(origin, pts[^1], ink, 5f);
+        DrawArc(origin, radius, -spread, spread, 28, ink, 7f, true);
+    }
 
     private void Note(string text)
     {

@@ -6,7 +6,8 @@ namespace CaveCurse;
 public static class Look
 {
     private const float Tile = 48f;
-    private const float Scale = 3f;
+    public const float ActorScale = 3f;
+    private const float Scale = ActorScale;
     private static readonly Color Void = new("100c14");
 
     public static float FoeSpan(bool boss, bool dasher)
