@@ -65,12 +65,12 @@ public sealed partial class ExploreView : Control
         top.AddChild(row);
 
         _peekButton = UiKit.Button("窥视", OnPeek);
-        _peekButton.CustomMinimumSize = new Vector2(160, 44);
+        _peekButton.CustomMinimumSize = new Vector2(220, 44);
         _peekButton.FocusMode = FocusModeEnum.None;
         row.AddChild(_peekButton);
 
         _enterButton = UiKit.Button("进入", OnEnter);
-        _enterButton.CustomMinimumSize = new Vector2(160, 44);
+        _enterButton.CustomMinimumSize = new Vector2(220, 44);
         _enterButton.FocusMode = FocusModeEnum.None;
         row.AddChild(_enterButton);
 

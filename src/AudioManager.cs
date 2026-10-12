@@ -18,7 +18,11 @@ public partial class AudioManager : Node
     private CanvasLayer? _layer;
     private Button? _musicButton;
     private Button? _sfxButton;
+    private Button? _downButton;
+    private Button? _upButton;
+    private Button? _closeButton;
     private int _row;
+    private int _bus;
     private ulong _clock;
 
     public override void _Ready()
@@ -62,14 +66,18 @@ public partial class AudioManager : Node
 
         if (key.Keycode is Key.V or Key.Escape or Key.K)
             SetMenu(false);
-        else if (key.Keycode is Key.Up or Key.W or Key.Key1 or Key.Kp1)
-            Select(0);
-        else if (key.Keycode is Key.Down or Key.S or Key.Key2 or Key.Kp2)
-            Select(1);
+        else if (Keys.Up(key))
+            Move(-1);
+        else if (Keys.Down(key))
+            Move(1);
         else if (key.Keycode is Key.Left or Key.A)
             Nudge(-1);
         else if (key.Keycode is Key.Right or Key.D)
             Nudge(1);
+        else if (Keys.Digit(key) is int number)
+            PressNumber(number);
+        else if (Keys.Confirm(key))
+            ActivateRow();
         GetViewport().SetInputAsHandled();
     }
 
@@ -93,13 +101,49 @@ public partial class AudioManager : Node
 
     private void Select(int row)
     {
-        _row = row;
+        _row = Mathf.Clamp(row, 0, 4);
+        if (_row <= 1)
+            _bus = _row;
         RefreshMenu();
+    }
+
+    private void Move(int delta)
+    {
+        _row = ((_row + delta) % 5 + 5) % 5;
+        if (_row <= 1)
+            _bus = _row;
+        RefreshMenu();
+    }
+
+    private void PressNumber(int number)
+    {
+        if (number == 5)
+        {
+            SetMenu(false);
+            return;
+        }
+        if (number is < 1 or > 4)
+            return;
+        Select(number - 1);
+        if (number == 3)
+            Nudge(-1);
+        else if (number == 4)
+            Nudge(1);
+    }
+
+    private void ActivateRow()
+    {
+        if (_row == 2)
+            Nudge(-1);
+        else if (_row == 3)
+            Nudge(1);
+        else if (_row == 4)
+            SetMenu(false);
     }
 
     private void Nudge(int direction)
     {
-        if (_row == 0)
+        if (_bus == 0)
             _volume.NudgeMusic(direction);
         else
             _volume.NudgeSfx(direction);
@@ -117,10 +161,13 @@ public partial class AudioManager : Node
 
     private void RefreshMenu()
     {
-        if (_musicButton == null || _sfxButton == null)
+        if (_musicButton == null || _sfxButton == null || _downButton == null || _upButton == null || _closeButton == null)
             return;
         ChoiceList.Paint(_musicButton, $"[1] 音乐 {Percent(_volume.Music)}", _row == 0);
         ChoiceList.Paint(_sfxButton, $"[2] 音效 {Percent(_volume.Sfx)}", _row == 1);
+        ChoiceList.Paint(_downButton, "[3] 减小", _row == 2);
+        ChoiceList.Paint(_upButton, "[4] 加大", _row == 3);
+        ChoiceList.Paint(_closeButton, "[5] 关闭  [Esc]", _row == 4);
     }
 
     private static string Percent(float value) => $"{Mathf.RoundToInt(value * 100f)}%";
@@ -249,27 +296,52 @@ public partial class AudioManager : Node
         dim.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         _layer.AddChild(dim);
         var chrome = UiKit.Chrome();
-        chrome.Position = new Vector2(330, 170);
-        chrome.Size = new Vector2(620, 300);
+        chrome.Position = new Vector2(330, 120);
+        chrome.Size = new Vector2(620, 460);
         _layer.AddChild(chrome);
         var box = new VBoxContainer
         {
-            Position = new Vector2(360, 196),
-            Size = new Vector2(560, 250),
+            Position = new Vector2(360, 146),
+            Size = new Vector2(560, 410),
         };
         box.AddThemeConstantOverride("separation", 10);
         _layer.AddChild(box);
-        box.AddChild(UiKit.Label("音量。上下选择，左右加减。Esc 或 V 关闭。"));
-        _musicButton = UiKit.Button("[1] 音乐", () => Select(0));
-        _sfxButton = UiKit.Button("[2] 音效", () => Select(1));
+        box.AddChild(VolumeHint("音量。上下移动金色高亮，左右加减当前的音乐或音效。"));
+        box.AddChild(VolumeHint("[J] 确认，[Esc] 或 V 关闭。"));
+        _musicButton = MenuButton("[1] 音乐", () => Select(0));
+        _sfxButton = MenuButton("[2] 音效", () => Select(1));
+        _downButton = MenuButton("[3] 减小", () =>
+        {
+            Select(2);
+            Nudge(-1);
+        });
+        _upButton = MenuButton("[4] 加大", () =>
+        {
+            Select(3);
+            Nudge(1);
+        });
+        _closeButton = MenuButton("[5] 关闭", () => SetMenu(false));
         box.AddChild(_musicButton);
         box.AddChild(_sfxButton);
-        var row = new HBoxContainer();
-        row.AddThemeConstantOverride("separation", 12);
-        row.AddChild(UiKit.Button("减小", () => Nudge(-1)));
-        row.AddChild(UiKit.Button("加大", () => Nudge(1)));
-        box.AddChild(row);
+        box.AddChild(_downButton);
+        box.AddChild(_upButton);
+        box.AddChild(_closeButton);
         RefreshMenu();
+    }
+
+    private static Button MenuButton(string text, Action action)
+    {
+        var button = UiKit.Button(text, action);
+        button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        return button;
+    }
+
+    private static Label VolumeHint(string text)
+    {
+        var label = UiKit.Label(text);
+        label.AutowrapMode = TextServer.AutowrapMode.Arbitrary;
+        label.CustomMinimumSize = new Vector2(520, 0);
+        return label;
     }
 
     private float RealSlice()

@@ -94,6 +94,9 @@ public static class UiKit
         {
             Text = text,
             Theme = Theme,
+            ClipText = false,
+            TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming,
+            Alignment = HorizontalAlignment.Left,
             FocusMode = Control.FocusModeEnum.None,
             CustomMinimumSize = new Vector2(0, 36),
         };
