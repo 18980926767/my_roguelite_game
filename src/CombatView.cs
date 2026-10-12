@@ -98,6 +98,10 @@ public sealed partial class CombatView : Control
     private bool _aimBasic;
     private readonly List<Button> _actionButtons = new();
     private readonly List<Button> _slotButtons = new();
+    private readonly ChoiceList _choices = new();
+    private int _target = -1;
+    private const int CommitChoice = 2;
+    private const int SlotChoice = 4;
 
     public CombatView(RunState run, IReadOnlyList<EnemySpec> specs, Random rng, Action<bool, string> finished, IReadOnlyList<Dir> exits)
     {
@@ -132,7 +136,7 @@ public sealed partial class CombatView : Control
         _hud.OffsetBottom = 102;
         _hud.ClipText = false;
         AddChild(_hud);
-        _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格，可以一直不按。");
+        _logLabel = UiKit.Label("在房间里躲开弹幕。蓄力满了按空格、J 或回车进入时停，可以一直不按。");
         _logLabel.SetAnchorsPreset(LayoutPreset.TopLeft);
         _logLabel.OffsetLeft = 660;
         _logLabel.OffsetTop = 10;
@@ -237,10 +241,56 @@ public sealed partial class CombatView : Control
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (_ended || _clear.Running || _clear.Done || _hitStop > 0f || _phase != Phase.Realtime || _charge < 1f)
+        if (_ended || _portraitLeft > 0f || _clear.Running || _clear.Done || _hitStop > 0f)
             return;
-        if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Space })
+        if (@event is not InputEventKey key)
+            return;
+        if (_phase == Phase.Focus)
+        {
+            HandleFocusKey(key);
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (_phase == Phase.Realtime && _charge >= 1f && Keys.Confirm(key))
+        {
             BeginFocus();
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    private void HandleFocusKey(InputEventKey key)
+    {
+        var tab = Keys.Tab(key);
+        if (tab != 0)
+        {
+            CycleTarget(tab);
+            return;
+        }
+        if (Keys.Previous(key))
+        {
+            _choices.Move(-1);
+            return;
+        }
+        if (Keys.Next(key))
+        {
+            _choices.Move(1);
+            return;
+        }
+        if (Keys.Confirm(key))
+        {
+            if (_choices.SelectedDisabled)
+                Note("现在选不了这个。");
+            else
+                _choices.Confirm();
+            return;
+        }
+        if (Keys.Cancel(key))
+        {
+            CancelFocus();
+            return;
+        }
+        if (Keys.Digit(key) is int number && !_choices.PressNumber(number) && number <= _choices.Count)
+            Note("现在选不了这个。");
     }
 
     private void FitArena()
@@ -293,8 +343,8 @@ public sealed partial class CombatView : Control
             DrawLine(shot.Pos, tip, new Color("f6e58d"), 3f);
             DrawCircle(shot.Pos, 3, new Color("fff6c2"));
         }
-        foreach (var foe in _foes)
-            DrawFoe(foe);
+        for (var i = 0; i < _foes.Count; i++)
+            DrawFoe(_foes[i], _phase == Phase.Focus && i == AttackTarget());
         var swing = 1f + Unit(_swing, CombatFeel.HitPunchSeconds) * 0.1f;
         Look.Person(this, _player, _face, swing, Unit(_hurtFlash, CombatFeel.HitFlashSeconds));
         DrawPops();
@@ -339,20 +389,21 @@ public sealed partial class CombatView : Control
         _aimBasic = true;
         _portraitLeft = 0f;
         _portraitFoe = -1;
-        var nearest = Nearest();
-        _actionButtons[0].Text = nearest >= 0 ? $"普攻 {_foes[nearest].Spec.Name}" : "没有目标";
+        _target = Nearest();
+        RefreshAttackLabel();
         RefreshSlotButtons();
+        _choices.Index = 0;
         SetFocusUi(true);
-        Note("时停。排出这一次行动，然后跳过。");
+        Note("时停。[Tab] 换目标。方向键选按钮，[J] 确认，数字键直选，[Esc] 取消。");
         RefreshHud();
     }
 
     private void BuildFocusButtons()
     {
-        AddAction("普攻最近的敌人", () =>
+        AddAction("普攻", () =>
         {
             _aimBasic = true;
-            QueueAttack(Nearest());
+            QueueAttack(AttackTarget());
         });
         AddAction("物品", ToggleItems);
         AddAction("跳过并结算", Commit);
@@ -380,13 +431,16 @@ public sealed partial class CombatView : Control
         box.MouseFilter = MouseFilterEnum.Stop;
         _slots.AddChild(box);
         box.AddChild(SlotHeading("技能槽"));
-        box.AddChild(SlotCell("随机属性", QueueSkill));
+        var skill = SlotCell("随机属性", QueueSkill);
+        box.AddChild(skill);
+        _choices.Add(skill, "随机属性", QueueSkill);
         box.AddChild(SlotHeading("武器槽"));
         for (var slot = 0; slot < RunState.SlotCount; slot++)
         {
             var index = slot;
             var cell = SlotCell("空", () => SwapTo(index));
             _slotButtons.Add(cell);
+            _choices.Add(cell, "空", () => SwapTo(index));
             box.AddChild(cell);
         }
         AddChild(_slots);
@@ -410,6 +464,7 @@ public sealed partial class CombatView : Control
             Text = text,
             Theme = UiKit.Theme,
             ClipText = false,
+            FocusMode = FocusModeEnum.None,
             CustomMinimumSize = new Vector2(200, 64),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
@@ -450,9 +505,38 @@ public sealed partial class CombatView : Control
         for (var slot = 0; slot < _slotButtons.Count; slot++)
         {
             var weapon = _run.Slots[slot];
-            _slotButtons[slot].Text = weapon?.Name ?? "空";
             _slotButtons[slot].Disabled = weapon == null;
+            _choices.SetLabel(SlotChoice + slot, weapon?.Name ?? "空");
         }
+    }
+
+    private void RefreshAttackLabel()
+    {
+        var index = AttackTarget();
+        var name = index >= 0 ? _foes[index].Spec.Name : "没有目标";
+        _choices.SetLabel(0, $"普攻 {name}");
+    }
+
+    private int AttackTarget()
+    {
+        if (_target >= 0 && _target < _foes.Count && _foes[_target].Alive)
+            return _target;
+        return Nearest();
+    }
+
+    private void CycleTarget(int dir)
+    {
+        if (_foes.Count == 0)
+            return;
+        if (_target < 0)
+            _target = 0;
+        for (var n = 0; n < _foes.Count; n++)
+        {
+            _target = (_target + dir + _foes.Count) % _foes.Count;
+            if (_foes[_target].Alive)
+                break;
+        }
+        RefreshAttackLabel();
     }
 
     private void SwapTo(int slot)
@@ -486,6 +570,7 @@ public sealed partial class CombatView : Control
         var button = UiKit.Button(text, action);
         _actionButtons.Add(button);
         _actions.AddChild(button);
+        _choices.Add(button, text, action);
     }
 
     private void SetFocusUi(bool on)
@@ -510,6 +595,8 @@ public sealed partial class CombatView : Control
         _queue.Add(new Plan { Kind = Act.Attack, Target = index, Text = $"普攻 {_foes[index].Spec.Name}" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
         BeginPortrait(index);
+        if (_ap <= 0)
+            _choices.Index = CommitChoice;
     }
 
     private void QueueSkill()
@@ -524,6 +611,35 @@ public sealed partial class CombatView : Control
         _run.SkillCooldown = RunState.SkillCooldownSeconds;
         _queue.Add(new Plan { Kind = Act.Skill, Text = "随机属性" });
         Note(string.Join(" → ", _queue.Select(item => item.Text)));
+        if (_ap <= 0)
+            _choices.Index = CommitChoice;
+    }
+
+    private void CancelFocus()
+    {
+        while (_queue.Count > 0)
+            RefundLast();
+        RefreshSlotButtons();
+        Engine.TimeScale = 1;
+        _phase = Phase.Realtime;
+        SetFocusUi(false);
+        Note("回到蓄力。这一轮还没结算。");
+        RefreshHud();
+    }
+
+    private void RefundLast()
+    {
+        var last = _queue[^1];
+        _queue.RemoveAt(_queue.Count - 1);
+        if (last.Kind is Act.Attack or Act.Skill)
+            _ap++;
+        if (last.Kind == Act.Swap)
+            _run.ActiveSlot = last.Slot;
+        RefreshSlotButtons();
+        if (last.Kind != Act.Skill)
+            return;
+        _run.Mana = Math.Min(_run.MaxMana, _run.Mana + RunState.SkillManaCost);
+        _run.SkillCooldown = 0;
     }
 
     private void Commit()
@@ -878,7 +994,7 @@ public sealed partial class CombatView : Control
                 {
                     Phase.Focus => "时停",
                     Phase.Grace => $"提前移动 {_grace:0.0}s",
-                    _ => _charge >= 1f ? "按空格时停" : "蓄力中",
+                    _ => _charge >= 1f ? "按 空格、J 或回车时停" : "蓄力中",
                 };
         _hud.Text =
             $"{phase}\n生命 {_run.Hp}/{_run.MaxHp}  魔力 {_run.Mana}/{_run.MaxMana}  护盾 {_run.Shield}\n" +
@@ -974,7 +1090,7 @@ public sealed partial class CombatView : Control
         });
     }
 
-    private void DrawFoe(Foe foe)
+    private void DrawFoe(Foe foe, bool selected)
     {
         var dying = !foe.Alive;
         if (dying && foe.DeathLeft <= 0f && foe.DeathPlayed)
@@ -1003,9 +1119,14 @@ public sealed partial class CombatView : Control
         }
         if (!foe.Alive)
             return;
+        if (selected)
+        {
+            var span = Look.FoeSpan(boss, dasher);
+            DrawRect(new Rect2(foe.Pos.X - span * 0.45f, foe.Pos.Y - span * 0.55f, span * 0.9f, span), new Color("f2d48a"), false, 3f);
+        }
         var below = Look.FoeSpan(boss, dasher) * 0.5f + 6f;
         DrawString(UiKit.Font, foe.Pos + new Vector2(-12, below), $"{foe.Hp}", fontSize: 14, modulate: new Color("f7f3ea"));
-        if (ShowingStrikePreview())
+        if (selected && ShowingStrikePreview())
             DrawStrikePreview(foe, boss, dasher);
     }
 
