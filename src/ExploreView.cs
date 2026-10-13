@@ -10,8 +10,9 @@ public sealed partial class ExploreView : Control
     private readonly Action<Dir> _enter;
     private readonly Action<Dir> _peek;
     private readonly Label _stats;
+    private readonly Label _notice;
+    private readonly Control _doorBar;
     private readonly Label _prompt;
-    private readonly Label _log;
     private readonly Button _peekButton;
     private readonly Button _enterButton;
     private int _x;
@@ -38,41 +39,62 @@ public sealed partial class ExploreView : Control
         hud.OffsetLeft = 16;
         hud.OffsetTop = 8;
         hud.OffsetRight = -16;
-        hud.OffsetBottom = 228;
+        hud.OffsetBottom = 56;
         AddChild(hud);
 
-        var top = new VBoxContainer();
-        top.SetAnchorsPreset(LayoutPreset.TopWide);
-        top.OffsetLeft = 36;
-        top.OffsetTop = 12;
-        top.OffsetRight = -36;
-        top.OffsetBottom = 220;
-        top.ClipContents = false;
-        top.AddThemeConstantOverride("separation", 6);
-        AddChild(top);
+        var status = new HBoxContainer();
+        status.SetAnchorsPreset(LayoutPreset.FullRect);
+        status.OffsetLeft = 20;
+        status.OffsetTop = 6;
+        status.OffsetRight = -20;
+        status.OffsetBottom = -6;
+        status.AddThemeConstantOverride("separation", 16);
+        hud.AddChild(status);
 
         _stats = UiKit.Label("");
-        top.AddChild(_stats);
+        _stats.VerticalAlignment = VerticalAlignment.Center;
+        _stats.SizeFlagsVertical = SizeFlags.ExpandFill;
+        status.AddChild(_stats);
 
-        _prompt = UiKit.Label("走到发亮的门口，再点窥视或进入。");
-        top.AddChild(_prompt);
+        _notice = UiKit.Label("");
+        _notice.HorizontalAlignment = HorizontalAlignment.Right;
+        _notice.VerticalAlignment = VerticalAlignment.Center;
+        _notice.SizeFlagsHorizontal = SizeFlags.ShrinkEnd;
+        _notice.SizeFlagsVertical = SizeFlags.ExpandFill;
+        status.AddChild(_notice);
 
-        var row = new HBoxContainer();
-        row.AddThemeConstantOverride("separation", 12);
-        top.AddChild(row);
+        _doorBar = UiKit.Chrome();
+        _doorBar.SetAnchorsPreset(LayoutPreset.BottomWide);
+        _doorBar.OffsetLeft = 16;
+        _doorBar.OffsetTop = -84;
+        _doorBar.OffsetRight = -200;
+        _doorBar.OffsetBottom = -12;
+        _doorBar.Visible = false;
+        AddChild(_doorBar);
+
+        var doorRow = new HBoxContainer();
+        doorRow.SetAnchorsPreset(LayoutPreset.FullRect);
+        doorRow.OffsetLeft = 18;
+        doorRow.OffsetTop = 10;
+        doorRow.OffsetRight = -18;
+        doorRow.OffsetBottom = -10;
+        doorRow.AddThemeConstantOverride("separation", 12);
+        _doorBar.AddChild(doorRow);
+
+        _prompt = UiKit.Label("可以窥视或进入。方向键或 WASD 走动。小地图在右下角，不能点。");
+        _prompt.VerticalAlignment = VerticalAlignment.Center;
+        _prompt.SizeFlagsVertical = SizeFlags.ExpandFill;
+        doorRow.AddChild(_prompt);
 
         _peekButton = UiKit.Button("窥视", OnPeek);
-        _peekButton.CustomMinimumSize = new Vector2(160, 44);
+        _peekButton.CustomMinimumSize = new Vector2(148, 40);
         _peekButton.FocusMode = FocusModeEnum.None;
-        row.AddChild(_peekButton);
+        doorRow.AddChild(_peekButton);
 
         _enterButton = UiKit.Button("进入", OnEnter);
-        _enterButton.CustomMinimumSize = new Vector2(160, 44);
+        _enterButton.CustomMinimumSize = new Vector2(148, 40);
         _enterButton.FocusMode = FocusModeEnum.None;
-        row.AddChild(_enterButton);
-
-        _log = UiKit.Label("你在出生的房间里。方向键或 WASD 走动。小地图在右下角，不能点。");
-        top.AddChild(_log);
+        doorRow.AddChild(_enterButton);
 
         _player = new Vector2(640, 360);
         RefreshHud();
@@ -93,11 +115,13 @@ public sealed partial class ExploreView : Control
         }
         ClampPlayer();
         _atDoor = DoorUnderPlayer();
-        var doorName = _atDoor == null ? "先走到门口" : NameOf(_atDoor.Value);
-        _peekButton.Text = _atDoor == null ? "窥视" : $"窥视{doorName}";
-        _enterButton.Text = _atDoor == null ? "进入" : $"进入{doorName}";
-        _peekButton.Disabled = _atDoor == null;
-        _enterButton.Disabled = _atDoor == null;
+        _doorBar.Visible = _atDoor != null;
+        if (_atDoor != null)
+        {
+            var doorName = NameOf(_atDoor.Value);
+            _peekButton.Text = $"窥视{doorName}";
+            _enterButton.Text = $"进入{doorName}";
+        }
         QueueRedraw();
     }
 
@@ -119,7 +143,7 @@ public sealed partial class ExploreView : Control
 
     public void SetPeek(string text) => _prompt.Text = text;
 
-    public void SetLog(string text) => _log.Text = text;
+    public void SetLog(string text) => _notice.Text = text;
 
     public void Refresh() => RefreshHud();
 
@@ -138,7 +162,10 @@ public sealed partial class ExploreView : Control
     private void FitRoom()
     {
         var size = Size.X < 200 ? GetViewportRect().Size : Size;
-        _room = new Rect2(72, 336, Mathf.Max(480, size.X - 160), Mathf.Max(220, size.Y - 468));
+        // 顶上只留一行状态。墙还要高出两格，所以地板从这里开始，下面仍给小地图留空。
+        const float roomTop = 160f;
+        const float roomBottom = 132f;
+        _room = new Rect2(72, roomTop, Mathf.Max(480, size.X - 160), Mathf.Max(220, size.Y - roomTop - roomBottom));
     }
 
     private void ClampPlayer()
@@ -225,13 +252,7 @@ public sealed partial class ExploreView : Control
 
     private void RefreshHud()
     {
-        var weapon = _run.ActiveWeapon;
-        var room = _map.At(_x, _y);
-        _stats.Text =
-            $"洞穴之咒    {FloorMap.KindLabel(room.Kind)}\n" +
-            $"生命 {_run.Hp}/{_run.MaxHp}    魔力 {_run.Mana}/{_run.MaxMana}    护盾 {_run.Shield}\n" +
-            $"力量 {_run.Attack}    防御 {_run.Defense}    速度 {(int)(_run.MoveSpeed / RunState.MoveSpeedPerPoint)}    金币 {_run.Gold}\n" +
-            $"手持 {(weapon == null ? "空" : weapon.Name)}";
+        _stats.Text = $"生命 {_run.Hp}/{_run.MaxHp}    魔力 {_run.Mana}/{_run.MaxMana}    金币 {_run.Gold}";
     }
 
     private static string NameOf(Dir dir) => dir switch

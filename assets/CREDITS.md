@@ -2,7 +2,7 @@
 
 房间、门和敌人是 [0x72](https://0x72.itch.io/dungeontileset-ii) 的 16x16 DungeonTileset II。高角度能看见墙面和正面的人，不是正上方，也不是菱形等距。许可是 CC0，可以商用，署名不强制。
 
-玩家是 `dungeon/player.png`：32×32，透明底，棕发棕衣、银剑，默认朝右。向左走时游戏会把这张图左右翻转。
+玩家是 `dungeon/player.png`：32×32，透明底，棕发、暖棕色衣服、银剑，轮廓有一圈深色边，默认朝右。向左走时游戏会把这张图左右翻转。
 
 界面底框仍用 [Kenney](https://kenney.nl) 的 Pixel UI。没有中文字形，文字仍用系统里的中文字体。
 
