@@ -9,7 +9,7 @@
 
 ## 运行
 
-用 Godot 4.7 .NET 打开本目录的 `project.godot`，再按运行。房间、门和角色是 0x72 的 CC0 地牢图，高角度能看见墙面；界面底框仍用 Kenney Pixel UI。说明在 [assets/CREDITS.md](assets/CREDITS.md)。像素图按最近邻显示。仓库里的 PNG 可以直接读；用编辑器打开后 Godot 会再生成 `.import`。
+用 Godot 4.7 .NET 打开本目录的 `project.godot`，再按运行。房间和门是 0x72 的 CC0 地牢图，高角度能看见墙面；玩家是棕发、拿银剑、默认朝右的像素人。界面底框仍用 Kenney Pixel UI。说明在 [assets/CREDITS.md](assets/CREDITS.md)。像素图按最近邻显示。仓库里的 PNG 可以直接读；用编辑器打开后 Godot 会再生成 `.import`。
 
 规则库不依赖引擎，可以单独测：
 

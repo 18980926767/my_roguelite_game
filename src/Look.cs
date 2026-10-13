@@ -6,6 +6,8 @@ public static class Look
 {
     private const float Tile = 48f;
     private const float Scale = 3f;
+    // 玩家图是 32×32、默认朝右。2 倍大约 64 像素，和小怪（16 像素图再乘 3）差不多高。
+    private const float PlayerScale = 2f;
     private static readonly Color Void = new("100c14");
 
     public static float FoeSpan(bool boss, bool dasher)
@@ -43,7 +45,7 @@ public static class Look
     {
         if (face.LengthSquared() < 0.01f)
             face = Vector2.Down;
-        DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false);
+        DrawActor(canvas, Art.Player, pos, face.X < -0.01f, winding: false, PlayerScale);
     }
 
     public static void Shooter(CanvasItem canvas, Vector2 pos, Vector2 face, bool winding)
@@ -215,10 +217,10 @@ public static class Look
         }
     }
 
-    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, bool flipX, bool winding)
+    private static void DrawActor(CanvasItem canvas, Texture2D tex, Vector2 pos, bool flipX, bool winding, float scale = Scale)
     {
-        var width = tex.GetWidth() * Scale;
-        var height = tex.GetHeight() * Scale;
+        var width = tex.GetWidth() * scale;
+        var height = tex.GetHeight() * scale;
         var tint = winding ? new Color(1f, 0.88f, 0.55f) : Colors.White;
         var rect = flipX
             ? new Rect2(pos.X + width / 2f, pos.Y - height / 2f, -width, height)
